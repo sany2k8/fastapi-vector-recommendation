@@ -1,330 +1,294 @@
-# Personal Media Server
+# Multimodal Product Recommender
 
-A self-hosted, single-owner media server. The owner uploads their own video files to private
-object storage, browses them in a web library, and streams them in-browser — including to a friend
-on a different ISP — with instant start and working seek, **without the app server ever touching
-the video bytes**.
+A FastAPI product search and recommendation service where **text and product photos live in
+the same vector space**. You can search the catalogue with a sentence, with an image, or with
+both blended together, and get personalised recommendations from user behaviour — all backed
+by PostgreSQL + `pgvector`.
 
-Built from [`personal-media-server-prd.md`](personal-media-server-prd.md) (Phases 1 and 2).
-
-> **Content constraint:** the only way media enters this system is the authenticated owner upload
-> flow. There is no ingest path that pulls from external sources, no scraping, and no proxying of
-> third-party sites.
+No embedding model is downloaded or run locally. Embeddings come either from a hosted API
+(Jina v4 or Cohere embed-v4, both with free tiers) or from a built-in offline stand-in that
+needs no API key at all.
 
 ---
 
-## Stack
+## The core idea
 
-| Layer | Choice |
-|---|---|
-| API | Python 3.12, FastAPI, Uvicorn, Pydantic v2 |
-| Data | PostgreSQL 17, SQLAlchemy 2, Alembic |
-| Storage | S3-compatible — **Cloudflare R2** in production, **MinIO** for local dev |
-| Auth | Argon2 password hashing, JWT in an httpOnly cookie |
-| Frontend | React 18 + TypeScript + Vite + Tailwind |
-| Tooling | uv, Ruff, mypy (strict), pytest |
+Every product carries **three vectors**:
 
-### Ports
-
-| Service | Port | Notes |
+| Column | Built from | Purpose |
 |---|---|---|
-| Frontend (Vite) | `5195` | Proxies `/api` → the backend |
-| Backend (FastAPI) | `8801` | OpenAPI docs at `/docs` |
-| PostgreSQL | `5440` | Non-default, so it coexists with other local stacks |
-| MinIO S3 API | `9010` | |
-| MinIO console | `9011` | `minioadmin` / `minioadmin` |
+| `text_embedding` | name + category + brand + description + attributes | semantic text matching |
+| `image_embedding` | the product photo (`NULL` if it has none) | visual matching |
+| `fused_embedding` | `normalize(w·text + (1-w)·image)` | the column the ANN index rides on |
 
----
+Queries take the same shape. A text query, an image query, or a weighted blend of both becomes
+one vector, and retrieval happens in two stages:
 
-## Architecture
+1. **ANN** over `fused_embedding` (HNSW, cosine) pulls a cheap candidate pool.
+2. **Exact re-rank** recomputes similarity against `text_embedding` and `image_embedding`
+   separately, then fuses them using *the caller's own* `text_weight`.
+
+Keeping the components alongside the fusion is what makes the weight a runtime knob instead of
+an index-build decision. One index serves every weighting.
 
 ```mermaid
 flowchart LR
-    subgraph Browser
-      UI[React + Vite<br/>:5195]
-      V["HTML5 &lt;video&gt;"]
+    Q["query<br/>text and/or image"] --> E[embedding provider]
+    E -->|query vector| ANN["stage 1: HNSW ANN<br/>on fused_embedding"]
+    ANN -->|top K·8 candidate ids| RR["stage 2: exact re-rank<br/>text_sim, image_sim"]
+    RR --> F["fuse: w·text + (1-w)·image"]
+    F --> MMR["MMR diversity<br/>(recommendations only)"]
+    MMR --> R[ranked results]
+
+    subgraph Ingest
+        P[product + photo] --> E2[embedding provider]
+        E2 --> V["text / image / fused<br/>vectors"] --> DB[(PostgreSQL + pgvector)]
     end
-
-    UI -->|/api · session cookie| API[FastAPI<br/>:8801]
-
-    subgraph API_internals [FastAPI application]
-      AUTH[auth<br/>session + share tokens]
-      SVC[services<br/>video · share · streaming · usage]
-      REPO[repositories]
-      ST[storage adapter<br/>S3 protocol]
-    end
-
-    API --- AUTH
-    AUTH --> SVC
-    SVC --> REPO
-    SVC --> ST
-    REPO --> DB[(PostgreSQL<br/>:5440)]
-    ST -->|presign · head · delete| OBJ[(Private bucket<br/>R2 / MinIO)]
-
-    UI -.->|PUT parts directly| OBJ
-    V -.->|Range GETs directly<br/>206 Partial Content| OBJ
-
-    classDef dashed stroke-dasharray: 4 4;
-    class UI,V dashed;
+    ANN -.-> DB
+    RR -.-> DB
 ```
 
-The dotted lines are the point of the design: **video bytes never transit the app server**, in
-either direction. The server issues short-lived presigned URLs and stays out of the byte path.
+---
 
-### Upload — direct to storage
+## Stack & ports
 
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant A as FastAPI
-    participant S as Object storage
-    participant D as Postgres
+| Piece | Choice | Port |
+|---|---|---|
+| API | FastAPI + Uvicorn, Pydantic v2 | **8800** |
+| Database | PostgreSQL 17 + `pgvector` (HNSW, cosine) | **5439** |
+| ORM / migrations | SQLAlchemy 2 (async, psycopg 3) + Alembic | — |
+| Embeddings | Jina v4 / Cohere embed-v4 / offline stand-in | — |
+| Demo UI | single static page served by the API | `/` |
 
-    B->>A: POST /api/videos (metadata, filename, size)
-    A->>A: check storage ceiling (pending rows count)
-    A->>S: CreateMultipartUpload
-    A->>D: INSERT video (status=pending)
-    A-->>B: upload_id + presigned PUT URL per part
-    loop 3 parts in parallel
-      B->>S: PUT part N (bytes go straight here)
-      S-->>B: ETag
-    end
-    B->>A: POST /api/videos/{id}/complete (parts + ETags)
-    A->>S: CompleteMultipartUpload
-    A->>S: HeadObject
-    Note over A: size taken from storage, not from the client
-    A->>D: UPDATE video (status=ready, real size)
-    A-->>B: ready
-```
-
-### Playback — presigned redirect (PRD §9, Option B)
-
-```mermaid
-sequenceDiagram
-    participant G as Guest browser
-    participant A as FastAPI
-    participant D as Postgres
-    participant S as Object storage
-
-    G->>A: GET /api/share/{token}
-    A->>D: look up SHA-256(token)
-    Note over A: reject if unknown, expired, or revoked
-    A-->>G: video metadata (this title only)
-    G->>A: GET /api/share/{token}/stream-url
-    A->>S: presign GET (short TTL, one object)
-    A-->>G: { url, expires_in }
-    loop play and seek
-      G->>S: GET url with Range: bytes=…
-      S-->>G: 206 Partial Content
-    end
-    Note over G,S: zero app-server bandwidth, zero R2 egress cost
-```
-
-A presigned URL can expire during a long title, so the player catches the media error, requests a
-fresh URL, and resumes at the same timestamp.
+Ports are deliberately non-default so this stack coexists with other local Compose projects.
 
 ---
 
 ## Running it
-
-**Prerequisites:** Docker, [uv](https://docs.astral.sh/uv/), Node 20+.
 
 ```bash
 docker compose up -d
 ```
 
 ```bash
-cp .env.example backend/.env
-```
-
-Then set a real `JWT_SECRET` in `backend/.env`:
-
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+uv venv && uv pip install -e ".[dev]"
 ```
 
 ```bash
-cd backend && uv venv --python 3.12 && uv pip install -e ".[dev]"
+cp .env.example .env && uv run alembic upgrade head
 ```
 
 ```bash
-cd backend && uv run alembic upgrade head
-```
-
-Create the owner account (there is no self-service registration):
-
-```bash
-cd backend && uv run media-cli seed-owner --username <you>
-```
-
-Run the two dev servers:
-
-```bash
-cd backend && uv run uvicorn app.main:app --reload --port 8801
+uv run python -m scripts.seed --reset
 ```
 
 ```bash
-cd frontend && npm install && npm run dev
+uv run uvicorn app.main:app --reload --port 8800
 ```
 
-Open http://localhost:5195.
+Then open <http://localhost:8800> for the demo UI, or <http://localhost:8800/docs> for the
+OpenAPI explorer.
 
-### Everyday commands
+Two operational commands: `uv run recsys info` prints the active configuration and catalogue
+size; `uv run recsys reindex` re-embeds every product with the current provider.
 
-```bash
-make help
-```
+The seeder loads 28 products across 8 categories and draws their images procedurally with
+Pillow, so the whole thing works offline. To use real photos instead, drop files named after
+the SKU (`SNK-001.jpg`, …) into `data/images/seed/` before seeding.
 
 ---
 
-## Switching to Cloudflare R2
+## Choosing an embedding provider
 
-No code changes — swap the storage block in `backend/.env`:
+Set `EMBEDDING_PROVIDER` in `.env`. This is the one decision that changes what the system can
+actually do.
+
+| Provider | Cross-modal? | Cost | Notes |
+|---|---|---|---|
+| `local_hash` *(default)* | **No** | free, offline | Feature-hashed text + colour/edge image histograms. No API key, no model download. |
+| `jina` | **Yes** | free tier | `jina-embeddings-v4`, 1–2048 dims via Matryoshka truncation. Needs `JINA_API_KEY`. |
+| `cohere` | **Yes** | trial tier | `embed-v4.0`, dims 256/512/1024/1536. Needs `COHERE_API_KEY`. |
+
+### What "cross-modal" actually means here
+
+Only a real multimodal model puts a sentence and a photograph in the *same* space. That is what
+lets "a red running shoe" match a **picture** of a red running shoe with no shared keywords.
+
+The `local_hash` provider does **not** do that, and the system does not pretend otherwise:
+
+- `supports_cross_modal` is `False`, and every search response carries a `cross_modal` field.
+- Text queries are compared only against `text_embedding`, image queries only against
+  `image_embedding` — mixing them would pour unrelated noise into the candidate pool.
+- The demo UI shows a banner and the API logs a warning at startup.
+
+What still works offline, genuinely: **text → text** search, and **image → image** search
+(colour/layout similarity — real reverse-image-search behaviour). Only text ↔ image is off.
+
+To get true multimodal retrieval, set a key and switch provider — no other code changes:
 
 ```bash
-STORAGE_BACKEND=r2
-S3_BUCKET=media
-S3_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=<key>
-S3_SECRET_ACCESS_KEY=<secret>
-S3_REGION=auto
+EMBEDDING_PROVIDER=jina
+JINA_API_KEY=your_key_here
+EMBEDDING_DIM=512
 ```
 
-Then, in the Cloudflare dashboard:
-
-1. Keep the bucket **private** — no public access, no listing (NFR-2.1).
-2. Add a **CORS policy** allowing `PUT`, `GET`, `HEAD` from your app's origin, exposing the `ETag`
-   header. Browser uploads and range reads both go directly to R2, so without this they fail with
-   an opaque CORS error. (R2 rejects the S3 `PutBucketCors` call, so the app cannot set this for
-   you — it logs a warning and continues.)
-3. Set `PUBLIC_BASE_URL` to the public URL of the frontend so share links are correct.
-
-Verify connectivity before trusting it:
+Then re-embed the catalogue, because vectors from different providers are not comparable and a
+half-migrated table returns quietly wrong results:
 
 ```bash
-cd backend && uv run media-cli storage-check
+uv run recsys reindex
 ```
+
+If you also changed `EMBEDDING_DIM`, the column width changed too — run
+`uv run alembic downgrade base && uv run alembic upgrade head` and re-seed instead.
 
 ---
 
 ## API
 
-Everything is under `/api`. Auth is the owner session cookie unless noted.
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/api/v1/products` | Create a product (multipart, optional photo) and embed it |
+| `GET` | `/api/v1/products` | List with category/brand/price filters |
+| `GET` | `/api/v1/products/{id}` | Fetch one |
+| `PUT` | `/api/v1/products/{id}/image` | Attach/replace a photo, re-embed |
+| `DELETE` | `/api/v1/products/{id}` | Remove product and its image |
+| `POST` | `/api/v1/search/text` | Semantic text search |
+| `POST` | `/api/v1/search/image` | Reverse image search |
+| `POST` | `/api/v1/search/multimodal` | Text + image blended by `text_weight` |
+| `GET` | `/api/v1/products/{id}/similar` | "More like this" |
+| `POST` | `/api/v1/interactions` | Record view/click/like/cart/purchase |
+| `GET` | `/api/v1/users/{id}/recommendations` | Personalised feed |
+| `GET` | `/health`, `/health/ready` | Liveness; readiness incl. pgvector + provider |
 
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| POST | `/api/auth/login` | none | Owner login → session cookie |
-| POST | `/api/auth/logout` | owner | End session |
-| GET | `/api/auth/me` | owner | Current user |
-| POST | `/api/videos` | owner | Create metadata (pending) + init multipart upload |
-| POST | `/api/videos/{id}/complete` | owner | Complete upload → ready |
-| POST | `/api/videos/{id}/abort` | owner | Discard a pending upload |
-| GET | `/api/videos` | owner | Library (filters: `genre`, `year`, `q`, `page`, `page_size`) |
-| GET | `/api/videos/facets` | owner | Genre and year values for the filter controls |
-| GET | `/api/videos/{id}` | owner **or** share token | Video detail |
-| PATCH | `/api/videos/{id}` | owner | Edit metadata |
-| DELETE | `/api/videos/{id}` | owner | Delete video + objects |
-| GET | `/api/videos/{id}/poster` | owner **or** share token | 302 → presigned poster URL |
-| GET | `/api/videos/{id}/stream-url` | owner **or** share token | `{ url, expires_in, size_bytes }` |
-| GET | `/api/videos/{id}/stream` | owner **or** share token | 302 → presigned URL, or `?mode=proxy` for byte ranges |
-| POST | `/api/videos/{id}/share` | owner | Create a share link (token returned **once**) |
-| GET | `/api/videos/{id}/share` | owner | Links for one video |
-| GET | `/api/share/{token}` | none | Guest playback metadata for one title |
-| GET | `/api/share/{token}/stream-url` | none | Guest stream URL |
-| DELETE | `/api/share/{token}` | owner | Revoke by raw token |
-| GET | `/api/share-links` | owner | All links |
-| DELETE | `/api/share-links/{id}` | owner | Revoke by id (what the UI uses) |
-| GET | `/api/usage` | owner | Storage used, counts, limits |
-| GET | `/health` | none | Liveness |
+### Examples
 
-Errors use one envelope: `{"error": {"code": "...", "message": "..."}}`.
+```bash
+curl -s localhost:8800/api/v1/search/text -H 'content-type: application/json' \
+  -d '{"query":"warm waterproof jacket for winter hiking","top_k":5}'
+```
 
-A share token may be presented as `?token=…` or the `X-Share-Token` header, and grants access to
-**exactly** the one video it was issued for.
+```bash
+curl -s -F image=@photo.jpg "localhost:8800/api/v1/search/image?top_k=5"
+```
+
+```bash
+curl -s -F image=@shoe.jpg -F query="but in red" \
+  "localhost:8800/api/v1/search/multimodal?top_k=5&text_weight=0.35"
+```
+
+```bash
+curl -s "localhost:8800/api/v1/users/demo-outdoors/recommendations?top_k=10&diversity=0.7"
+```
+
+### The `text_weight` knob
+
+Same seed product, three weightings — this is the whole point of storing the components
+separately (real output from the seeded catalogue, seed = *Alpine Down Puffer Jacket*):
+
+| `text_weight` | Top results |
+|---|---|
+| `1.0` (text only) | Heritage Waxed Cotton Jacket, Featherlight Windbreaker, Harbour Rain Shell |
+| `0.6` (default) | Commuter Laptop Backpack, Heritage Waxed Cotton Jacket, Pulse Smart Fitness Watch |
+| `0.0` (image only) | Mesh Ergonomic Desk Chair, Pulse Smart Fitness Watch, Commuter Laptop Backpack |
+
+At `0.0` the results are everything else in *midnight* — visual similarity, exactly as asked.
+
+---
+
+## How recommendations work
+
+Both recommendation paths end in the same retrieve → re-rank → diversify pipeline; only the
+query vector differs.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant API as FastAPI
+    participant S as RecommendationService
+    participant DB as pgvector
+
+    C->>API: GET /users/{id}/recommendations
+    API->>S: for_user(id, top_k, diversity)
+    S->>DB: recent interactions joined to products
+    alt no usable history
+        S->>DB: most_popular()
+        S-->>C: strategy = popularity_fallback
+    else has history
+        S->>S: profile = Σ (event weight × recency decay) × product vector
+        S->>DB: ANN on fused_embedding, excluding seen items
+        S->>DB: exact re-rank per modality
+        S->>S: MMR rerank (λ = diversity)
+        S-->>C: strategy = user_profile
+    end
+```
+
+- **Event weights** — purchase 4.0, cart 3.0, like 2.0, click 1.0, view 0.5.
+- **Recency decay** — exponential, 14-day half-life. A fresh view can outweigh a stale purchase.
+- **Already-seen items are excluded** — no recommending back what someone just bought.
+- **MMR diversity** (`diversity` = λ): `λ·relevance − (1−λ)·max similarity to already-picked`.
+  `1.0` is pure relevance; lower values stop the feed collapsing into five near-identical items.
+- **Cold start** falls back to popularity, and says so in the `strategy` field.
 
 ---
 
 ## Layout
 
 ```text
-backend/app/
-├── api/          # HTTP layer only: parse, call a service, serialize
-├── core/         # config, db, logging, security, errors, rate limiting
-├── models/       # SQLAlchemy, one module per domain
-├── schemas/      # Pydantic, one module per domain
-├── services/     # all business rules live here
-├── repositories/ # data access
-├── storage/      # StorageBackend protocol + the S3 implementation
-└── utils/        # range parsing
-frontend/src/
-├── api.ts        # the only place that talks to the backend
-├── upload.ts     # direct-to-storage multipart upload
-├── components/   # Player, VideoCard, ShareDialog, Layout
-├── pages/        # Login, Library, Upload, Video, Share (guest), Usage
-└── store/        # zustand session store
+app/
+├── api/v1/       # HTTP only: parse, call a service, serialise
+├── core/         # config, logging, db session, domain errors
+├── embeddings/   # provider interface + jina / cohere / local_hash
+├── models/       # SQLAlchemy (products with 3 vector columns, interactions)
+├── repositories/ # data access — all vector SQL lives here
+├── schemas/      # Pydantic request/response
+└── services/     # the rules: catalog, search, recommendation, ranking
+migrations/       # Alembic; vector width comes from EMBEDDING_DIM
+scripts/          # catalogue data, procedural images, seeder
+static/           # single-page demo UI
+tests/            # unit (pure) + integration (real Postgres, rolled back)
 ```
 
 Layering is one-directional: `api → services → repositories → db`.
 
 ---
 
-## Conventions & gotchas
-
-Things learned the hard way here — do not regress them.
-
-- **The API is mounted under `/api`.** The PRD lists paths without a prefix, but the SPA has a
-  `/usage` page and the API has a `/usage` endpoint; on one origin they collide and a page refresh
-  returns raw JSON. Sub-paths are otherwise exactly as specified in PRD §12.
-- **Share tokens are stored as SHA-256 hashes** (`share_links.token_hash`), a deliberate deviation
-  from PRD §8. The raw token is returned exactly once, at creation. A database leak yields no
-  working links.
-- **Never set `Content-Type` on a presigned part PUT.** It is not part of the signature, and
-  sending one makes S3/R2 reject the request as a signature mismatch.
-- **`ETag` must be CORS-exposed** by the bucket, or `complete_multipart_upload` gets empty ETags
-  and fails. MinIO exposes it by default; R2 needs it in the dashboard CORS rule.
-- **slowapi's `headers_enabled` must stay `False`.** With it on, every rate-limited endpoint must
-  accept or return a starlette `Response`, and any endpoint returning a Pydantic model 500s with
-  "parameter `response` must be an instance of starlette.responses.Response".
-- **`MINIO_SERVER_URL` must match the host the browser uses.** Presigned URLs are signed for a
-  specific host; if MinIO signs for its container name, the browser gets a signature mismatch.
-  The same applies to R2 behind a private network — that is what `S3_PUBLIC_ENDPOINT_URL` is for.
-- **Pending uploads count against the storage ceiling.** Otherwise several concurrent uploads can
-  collectively blow past the budget. Aborting or deleting frees the reservation.
-- **Object size comes from `HeadObject` after completion**, never from the client's claim — the
-  budget must not be spoofable.
-- **`cors_origins` is read as a raw comma-separated string.** pydantic-settings insists on JSON
-  for a `list[str]` field read from `.env`, which is a miserable thing to have in a config file.
-- **Genre filtering uses `@>` (array containment)**, not `= ANY`, so the GIN index on
-  `videos.genres` is actually used.
-- **Non-playable files are stored, not rejected** (PRD §10, no transcoding in Phase 1). MKV/HEVC
-  land with `playable=false` and the UI explains why they will not play.
-
----
-
-## Tests
+## Development
 
 ```bash
-cd backend && uv run pytest -q
+uv run pytest -q
 ```
 
-72 tests. Unit tests cover range parsing, container classification, and token/password handling.
-Integration tests run against a real Postgres (`media_test`, created automatically) with an
-in-memory storage fake, and cover auth, upload, budget enforcement, the library filters, both
-streaming modes, share-link lifecycle, and rate limiting.
+```bash
+uv run ruff format . && uv run ruff check --fix . && uv run mypy app
+```
 
-Verified end-to-end against the real stack (MinIO + Postgres) in a browser:
-
-- Owner login, upload with poster, library grid and filters.
-- 40 MB file uploaded as **3 parallel multipart PUTs directly to storage**.
-- Playback with `206 Partial Content` responses served **by storage, not the app**; a mid-file
-  seek produced disjoint buffered ranges (`[0–15.4s]`, `[50–54.7s]`) — no full-file download.
-- Proxy fallback (`?mode=proxy`) returning correct `Content-Range`, and `416` for out-of-range.
-- Share link created → guest page plays with no session → revoked → guest sees "link expired".
+Unit tests are pure and fast (ranking maths, the offline provider, and the hosted clients driven
+through a mock transport so a wrong API field name fails locally rather than against a real
+quota). Integration tests hit a real Postgres; each runs inside a transaction that is rolled
+back, so a test run leaves the seeded catalogue untouched. Tests skip cleanly if Postgres is
+not up.
 
 ---
 
-## Not built (deliberately)
+## Gotchas worth knowing
 
-- **Transcoding** (PRD §10). Files that browsers cannot play are stored and flagged.
-- **Phase 3 recommendations** (pgvector "similar titles").
-- Multi-tenant accounts, comments, ratings, DRM, native apps.
+- **`EMBEDDING_DIM` is baked into the schema.** `pgvector` columns are fixed width, and the
+  migration reads the setting at run time. Changing it means `alembic downgrade base`,
+  `upgrade head`, and a re-seed.
+- **Vectors from different providers are not comparable.** Switching provider invalidates every
+  stored vector — always re-seed.
+- **`event` is a reserved key in structlog.** `log.info("...", event=x)` raises `TypeError:
+  got multiple values for argument 'event'`. The interaction service uses `event_type`.
+- **Don't name a repository method `list`.** Inside the class body it shadows the builtin, so a
+  later `-> list[uuid.UUID]` annotation dies with `'function' object is not subscriptable`.
+  Hence `list_products`.
+- **Products without a photo are scored on text alone**, not penalised toward zero — otherwise
+  items awaiting photography could never rank.
+- **Image features are mean-centred on purpose.** Raw per-cell colour means put every catalogue
+  image above 0.94 cosine of every other, because product shots are mostly identical backdrop.
+  Centring on the image's own mean throws that shared component away. There is a regression
+  test pinning this.
+- **The demo images are drawn, not photographed**, so image similarity is colour-dominant. A
+  crimson sneaker's nearest visual neighbour is a crimson mug. That is correct behaviour for a
+  colour/edge histogram — real photos plus a hosted provider give semantic visual similarity.
