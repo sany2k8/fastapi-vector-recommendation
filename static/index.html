@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multimodal Product Recommender</title>
+<style>
+  :root {
+    --bg:#0f1117; --panel:#171a23; --line:#262b38; --text:#e6e8ee;
+    --muted:#8b93a7; --accent:#6ea8fe; --warn:#f0b429; --danger:#e5484d; --ok:#30a46c;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7fa; --panel:#fff; --line:#e2e5ec; --text:#1a1d26; --muted:#666e85; --accent:#2563eb; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:20px 26px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 4px; font-size:19px; letter-spacing:-.01em; }
+  h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .sub { color:var(--muted); font-size:13px; }
+  main { max-width:1280px; margin:0 auto; padding:20px 26px 60px; }
+  .banner { border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:16px; display:none;
+    background:color-mix(in srgb,var(--warn) 14%,transparent); border:1px solid var(--warn); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input[type=text], select { flex:1; min-width:200px; padding:9px 12px; border-radius:8px;
+    border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; font-size:14px; }
+  select { flex:0 0 auto; min-width:160px; }
+  button { padding:9px 15px; border-radius:8px; border:1px solid var(--accent); background:var(--accent);
+    color:#fff; font-size:14px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); }
+  button.danger { background:transparent; color:var(--danger); border-color:var(--danger); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.tiny { padding:4px 9px; font-size:12px; }
+  label { font-size:13px; color:var(--muted); }
+  .slider { display:flex; align-items:center; gap:10px; margin-top:12px; }
+  .slider input[type=range] { flex:1; }
+  .slider .val { font-variant-numeric:tabular-nums; min-width:38px; text-align:right; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(185px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; background:#fff; }
+  .card .body { padding:9px 11px; }
+  .card .name { font-size:13px; font-weight:600; margin-bottom:3px; }
+  .card .meta { font-size:12px; color:var(--muted); }
+  .score { font-variant-numeric:tabular-nums; font-size:11px; color:var(--accent); margin-top:5px; }
+  .status { color:var(--muted); font-size:13px; margin:10px 0; min-height:20px; }
+  .tabs { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+  .tabs button { background:transparent; color:var(--muted); border:1px solid var(--line); }
+  .tabs button[aria-selected=true] { color:#fff; background:var(--accent); border-color:var(--accent); }
+  .drop { border:1.5px dashed var(--line); border-radius:10px; padding:20px; text-align:center;
+    color:var(--muted); cursor:pointer; font-size:13px; }
+  .drop.has { border-color:var(--accent); color:var(--text); }
+  .hide { display:none !important; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11px; border:1px solid var(--line); }
+  .pill.yes { color:var(--ok); border-color:var(--ok); }
+  .pill.no { color:var(--muted); }
+  .compare { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+  .compare .col { border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--panel); }
+  .compare h3 { margin:0 0 3px; font-size:14px; }
+  .compare .colsub { font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .compare ol { margin:0; padding:0; list-style:none; counter-reset:rank; }
+  .compare li { font-size:13px; margin-bottom:8px; display:flex; gap:9px; align-items:center;
+    counter-increment:rank; }
+  .compare li::before { content:counter(rank) "."; color:var(--muted); font-size:11px;
+    min-width:14px; text-align:right; flex:0 0 auto; }
+  .compare li img { width:38px; height:38px; border-radius:6px; object-fit:cover;
+    background:#fff; flex:0 0 auto; border:1px solid var(--line); }
+  .compare li .noimg { width:38px; height:38px; border-radius:6px; flex:0 0 auto;
+    border:1px dashed var(--line); }
+  .compare li .txt { min-width:0; }
+  .compare li .nm { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .compare .s { color:var(--accent); font-variant-numeric:tabular-nums; font-size:11px; }
+  .bar { height:6px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:8px; }
+  .bar > div { height:100%; background:var(--accent); width:0%; transition:width .3s; }
+  .checks { display:flex; gap:14px; flex-wrap:wrap; margin:10px 0; }
+  .checks label { display:flex; gap:6px; align-items:center; color:var(--text); font-size:13px; }
+  code { font-size:12px; background:color-mix(in srgb,var(--muted) 15%,transparent); padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Multimodal Product Recommender</h1>
+  <div class="sub" id="providerLine">loading…</div>
+</header>
+
+<main>
+  <div class="banner" id="banner"></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-mode="text" aria-selected="true">Text search</button>
+    <button role="tab" data-mode="image" aria-selected="false">Image search</button>
+    <button role="tab" data-mode="multimodal" aria-selected="false">Text + image</button>
+    <button role="tab" data-mode="user" aria-selected="false">For you</button>
+    <button role="tab" data-mode="admin" aria-selected="false">Admin</button>
+  </div>
+
+  <!-- ---------------- search ---------------- -->
+  <div id="searchPanel">
+    <div class="panel">
+      <div class="row" id="textRow">
+        <input type="text" id="query" placeholder="e.g. warm waterproof jacket for winter hiking" />
+      </div>
+
+      <div id="imageRow" class="hide" style="margin-top:12px">
+        <div class="drop" id="drop">Click or drop a product image here</div>
+        <input type="file" id="file" accept="image/*" class="hide" />
+      </div>
+
+      <div id="userRow" class="hide" style="margin-top:12px">
+        <div class="row">
+          <select id="userId">
+            <option value="demo-outdoors">demo-outdoors (hiking / outdoors history)</option>
+            <option value="demo-desk">demo-desk (desk setup history)</option>
+          </select>
+        </div>
+        <div class="slider">
+          <label>diversity (MMR λ)</label>
+          <input type="range" id="diversity" min="0" max="1" step="0.05" value="0.7" />
+          <span class="val" id="diversityVal">0.70</span>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <label for="provider">index</label>
+        <select id="provider"></select>
+        <label class="checks" style="margin:0"><input type="checkbox" id="compare" /> compare all indexes</label>
+      </div>
+
+      <div class="slider" id="weightRow">
+        <label title="w in: score = w*text_similarity + (1-w)*image_similarity">
+          text ← weight → image</label>
+        <input type="range" id="weight" min="0" max="1" step="0.05" value="0.6" />
+        <span class="val" id="weightVal">0.60</span>
+      </div>
+
+      <div class="slider">
+        <label title="Keep only hits scoring at least this fraction of the best hit">
+          relevance cutoff</label>
+        <input type="range" id="ratio" min="0" max="0.95" step="0.05" value="0.45" />
+        <span class="val" id="ratioVal">0.45</span>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="go">Search</button>
+        <button class="ghost" id="clear">Clear image</button>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="compare hide" id="compareOut"></div>
+    <div class="grid" id="results"></div>
+  </div>
+
+  <!-- ---------------- admin ---------------- -->
+  <div id="adminPanel" class="hide">
+    <div class="panel">
+      <h2>Indexes</h2>
+      <table id="providerTable"><tbody></tbody></table>
+      <div class="sub" style="margin-top:10px" id="catalogLine"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Build</h2>
+      <div class="sub">Pick which indexes to write. Each provider is stored separately, so
+        re-indexing one never overwrites another.</div>
+      <div class="checks" id="providerChecks"></div>
+      <div class="checks">
+        <label><input type="checkbox" id="withImages" checked /> embed product images</label>
+        <label><input type="checkbox" id="resetFirst" /> wipe catalogue first</label>
+        <label title="Only embed products this index is missing — use after a rate-limit failure">
+          <input type="checkbox" id="skipExisting" /> resume (skip already-indexed)</label>
+      </div>
+      <div class="row">
+        <button id="seedBtn">Seed catalogue</button>
+        <button class="ghost" id="reindexBtn">Re-index selected</button>
+        <button class="danger" id="clearProviderBtn">Clear selected index</button>
+        <button class="danger" id="clearAllBtn">Delete everything</button>
+      </div>
+      <div class="status" id="jobStatus"></div>
+      <div class="bar hide" id="jobBar"><div></div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Recent jobs</h2>
+      <table id="jobTable"><tbody></tbody></table>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = "/api/v1";
+let mode = "text";
+let imageFile = null;
+let indexed = [];
+let caps = {};
+let poll = null;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (n === null || n === undefined) ? "—" : n.toFixed(3);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function json(res) {
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error?.message || body?.detail || res.statusText);
+  return body;
+}
+
+/* ---------------- status ---------------- */
+async function refresh() {
+  try {
+    const d = await json(await fetch("/health/ready"));
+    indexed = Object.keys(d.indexed_providers || {});
+    const counts = Object.entries(d.indexed_providers || {})
+      .map(([k, v]) => `${k} ${v.products}`).join(" · ") || "nothing indexed yet";
+    $("providerLine").textContent =
+      `default: ${d.default_provider} · ${d.embedding_dim}d · pgvector ${d.pgvector} · ` +
+      `${d.products} products · indexed: ${counts}`;
+
+    const sel = $("provider");
+    const previous = sel.value;
+    sel.innerHTML = indexed.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")
+      || `<option value="">— none indexed —</option>`;
+    if (indexed.includes(previous)) sel.value = previous;
+    else if (indexed.includes(d.default_provider)) sel.value = d.default_provider;
+
+    caps = d.provider_info || {};
+    showBanner();
+  } catch (e) {
+    $("providerLine").textContent = "API unreachable — is the server running?";
+  }
+}
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('[role=tab]').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('[role=tab]').forEach(b => b.setAttribute('aria-selected', b === btn));
+    mode = btn.dataset.mode;
+    const admin = mode === "admin";
+    $("adminPanel").classList.toggle("hide", !admin);
+    $("searchPanel").classList.toggle("hide", admin);
+    if (admin) { loadAdmin(); return; }
+    $("textRow").classList.toggle("hide", mode === "image" || mode === "user");
+    $("imageRow").classList.toggle("hide", mode === "text" || mode === "user");
+    $("userRow").classList.toggle("hide", mode !== "user");
+    $("weightRow").classList.toggle("hide", mode === "user");
+  };
+});
+
+$("drop").onclick = () => $("file").click();
+$("drop").ondragover = (e) => e.preventDefault();
+$("drop").ondrop = (e) => { e.preventDefault(); setFile(e.dataTransfer.files[0]); };
+$("file").onchange = (e) => setFile(e.target.files[0]);
+$("clear").onclick = () => setFile(null);
+function setFile(f) {
+  imageFile = f || null;
+  $("drop").textContent = f ? `selected: ${f.name}` : "Click or drop a product image here";
+  $("drop").classList.toggle("has", !!f);
+}
+
+for (const [id, out] of [["weight","weightVal"],["diversity","diversityVal"],["ratio","ratioVal"]]) {
+  $(id).oninput = (e) => $(out).textContent = (+e.target.value).toFixed(2);
+}
+$("provider").onchange = showBanner;
+$("query").onkeydown = (e) => { if (e.key === "Enter") run(); };
+$("go").onclick = run;
+
+/* ---------------- search ---------------- */
+async function run() {
+  $("go").disabled = true;
+  $("status").textContent = "searching…";
+  $("results").innerHTML = "";
+  $("compareOut").innerHTML = "";
+  $("compareOut").classList.add("hide");
+  try {
+    if ($("compare").checked && mode !== "user") return await runCompare();
+    const data = await dispatch($("provider").value);
+    const items = data.hits || data.items || [];
+    $("status").textContent = summarise(data, items);
+    render(items);
+  } catch (err) {
+    $("status").textContent = "error: " + err.message;
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+function summarise(data, items) {
+  const bits = [`${items.length} results in ${data.took_ms} ms`, `index: ${data.provider}`];
+  if (data.strategy) bits.push(`strategy: ${data.strategy}`);
+  if (data.candidates_considered !== undefined) bits.push(`${data.candidates_considered} candidates`);
+  if (data.below_threshold) bits.push(`${data.below_threshold} cut by threshold`);
+  if (data.signals_used) bits.push(`${data.signals_used} signals`);
+  return bits.join(" · ");
+}
+
+async function runCompare() {
+  if (!indexed.length) throw new Error("no indexes built yet — use the Admin tab");
+  const results = await Promise.all(indexed.map(async p => {
+    try { return [p, await dispatch(p)]; }
+    catch (e) { return [p, { error: e.message }]; }
+  }));
+  $("compareOut").classList.remove("hide");
+  $("compareOut").innerHTML = results.map(([p, d]) => {
+    if (d.error) return `<div class="col"><h3>${esc(p)}</h3>
+      <div class="colsub" style="color:var(--danger)">${esc(d.error)}</div></div>`;
+    const items = d.hits || d.items || [];
+    // Thumbnails matter most here: comparing image search across indexes is meaningless
+    // if you can only read the product names.
+    const rows = items.slice(0, 10).map(h => {
+      const p = h.product;
+      const thumb = p.image_url
+        ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">`
+        : `<span class="noimg"></span>`;
+      return `<li>${thumb}<span class="txt"><span class="nm">${esc(p.name)}</span>
+        <span class="s">${fmt(h.score)} · ${esc(p.category)}</span></span></li>`;
+    }).join("") || "<li><span class='s'>no results above threshold</span></li>";
+    return `<div class="col">
+      <h3>${esc(p)} ${d.cross_modal ? '<span class="pill yes">cross-modal</span>' : '<span class="pill no">not cross-modal</span>'}</h3>
+      <div class="colsub">${d.took_ms} ms · w=${fmt(d.text_weight)} · ${d.below_threshold ?? 0} cut</div>
+      <ol>${rows}</ol></div>`;
+  }).join("");
+  $("status").textContent = `compared ${results.length} indexes on the same query`;
+}
+
+async function dispatch(providerName) {
+  const weight = +$("weight").value;
+  const ratio = +$("ratio").value;
+  const topK = 12;
+  const qp = (extra) => new URLSearchParams({ top_k: topK, min_score_ratio: ratio,
+    ...(providerName ? { provider: providerName } : {}), ...extra }).toString();
+
+  if (mode === "user") {
+    const u = encodeURIComponent($("userId").value);
+    return json(await fetch(`${API}/users/${u}/recommendations?${qp({ diversity: $("diversity").value })}`));
+  }
+  if (mode === "text") {
+    return json(await fetch(`${API}/search/text`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: $("query").value, top_k: topK, provider: providerName || null,
+                             text_weight: weight, min_score_ratio: ratio })
+    }));
+  }
+  if (!imageFile) throw new Error("choose an image first");
+  const fd = new FormData();
+  fd.append("image", imageFile);
+  if (mode === "image") return json(await fetch(`${API}/search/image?${qp({})}`, { method: "POST", body: fd }));
+  fd.append("query", $("query").value);
+  return json(await fetch(`${API}/search/multimodal?${qp({ text_weight: weight })}`, { method: "POST", body: fd }));
+}
+
+function render(items) {
+  if (!items.length) {
+    $("results").innerHTML = `<div class="sub">Nothing scored above the relevance cutoff.
+      Lower it, or widen the query.</div>`;
+    return;
+  }
+  $("results").innerHTML = items.map(hit => {
+    const p = hit.product;
+    const img = p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">` : "";
+    return `<div class="card">${img}<div class="body">
+      <div class="name">${esc(p.name)}</div>
+      <div class="meta">${esc(p.category)} · ${esc(p.brand ?? "")} · $${p.price.toFixed(2)}</div>
+      <div class="score">score ${fmt(hit.score)} &nbsp; txt ${fmt(hit.text_similarity)} &nbsp; img ${fmt(hit.image_similarity)}</div>
+      <div style="margin-top:7px"><button class="ghost tiny" data-similar="${esc(p.id)}">more like this</button></div>
+    </div></div>`;
+  }).join("");
+  $("results").querySelectorAll("[data-similar]").forEach(b => b.onclick = () => similar(b.dataset.similar));
+}
+
+async function similar(id) {
+  $("status").textContent = "finding similar products…";
+  try {
+    const p = $("provider").value;
+    const data = await json(await fetch(
+      `${API}/products/${id}/similar?top_k=12&diversity=0.8&min_score_ratio=${$("ratio").value}` +
+      (p ? `&provider=${encodeURIComponent(p)}` : "")));
+    $("status").textContent = summarise(data, data.items);
+    $("compareOut").classList.add("hide");
+    render(data.items);
+  } catch (e) { $("status").textContent = "error: " + e.message; }
+}
+
+/* ---------------- admin ---------------- */
+async function loadAdmin() {
+  try {
+    const d = await json(await fetch(`${API}/admin/status`));
+    $("catalogLine").textContent =
+      `${d.products} products (${d.products_with_images} with images) · ${d.interactions} interactions · ` +
+      `${d.embedding_dim}d · default cutoff ${d.default_min_score_ratio}`;
+
+    $("providerTable").querySelector("tbody").innerHTML =
+      `<tr><th>provider</th><th>configured</th><th>indexed</th><th>images</th><th>cross-modal</th><th>products</th><th>model</th></tr>` +
+      d.providers.map(p => `<tr>
+        <td><b>${esc(p.name)}</b>${p.is_default ? ' <span class="pill">default</span>' : ''}</td>
+        <td>${pill(p.configured)}</td><td>${pill(p.indexed)}</td>
+        <td>${p.supports_images ? pill(true) : '<span class="pill no">text only</span>'}</td>
+        <td>${pill(p.cross_modal)}</td>
+        <td>${p.products}${p.with_images ? ` (${p.with_images} img)` : ""}</td>
+        <td class="sub">${esc(p.model || "—")}</td></tr>`).join("");
+
+    $("providerChecks").innerHTML = d.providers.filter(p => p.configured).map(p =>
+      `<label><input type="checkbox" name="prov" value="${esc(p.name)}" ${p.is_default ? "checked" : ""}/> ${esc(p.name)}</label>`
+    ).join("");
+
+    $("jobTable").querySelector("tbody").innerHTML =
+      `<tr><th>job</th><th>status</th><th>detail</th></tr>` +
+      (d.recent_jobs.length ? d.recent_jobs.map(j => `<tr>
+        <td>${esc(j.kind)}</td>
+        <td style="color:${j.status === 'failed' ? 'var(--danger)' : j.status === 'succeeded' ? 'var(--ok)' : 'var(--accent)'}">${esc(j.status)}</td>
+        <td class="sub">${esc(j.error || j.detail)}</td></tr>`).join("")
+        : `<tr><td colspan="3" class="sub">no jobs yet</td></tr>`);
+
+    if (d.active_job) watchJob(d.active_job.id); else stopWatch();
+  } catch (e) {
+    $("jobStatus").textContent = "error: " + e.message;
+  }
+}
+/* The banner is the honest-capability surface: it must say what the *selected* index
+   genuinely cannot do, rather than letting a user read noise as a result. */
+function showBanner() {
+  const name = $("provider").value;
+  const c = caps[name];
+  const banner = $("banner");
+  if (!c || c.cross_modal) { banner.style.display = "none"; return; }
+
+  banner.style.display = "block";
+  banner.innerHTML = c.supports_images
+    ? `<b>${esc(name)} is not cross-modal.</b> It embeds text and images into <i>separate</i> ` +
+      "spaces, so text→image matching is meaningless on this index. Text→text and image→image " +
+      "both work. Switch to <code>jina</code>, <code>cohere</code> or <code>voyage</code> for " +
+      "true cross-modal search."
+    : `<b>${esc(name)} is text-only.</b> This model does not embed images at all, so products ` +
+      "carry no image vector on this index and image search is unavailable here. Text search " +
+      "works normally.";
+}
+
+const pill = (b) => b ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>';
+const picked = () => [...document.querySelectorAll('input[name=prov]:checked')].map(c => c.value);
+
+async function submitJob(path, body, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try {
+    const job = await json(await fetch(`${API}/admin/${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    }));
+    watchJob(job.id);
+  } catch (e) { $("jobStatus").textContent = "error: " + e.message; }
+}
+
+$("seedBtn").onclick = () => submitJob("seed", {
+  reset: $("resetFirst").checked, with_images: $("withImages").checked, providers: picked()
+}, $("resetFirst").checked ? "Wipe the catalogue and re-seed?" : null);
+
+$("reindexBtn").onclick = () => submitJob("reindex",
+  { providers: picked(), skip_existing: $("skipExisting").checked });
+
+$("clearProviderBtn").onclick = () => {
+  const p = picked();
+  if (p.length !== 1) { $("jobStatus").textContent = "select exactly one index to clear"; return; }
+  submitJob("clear-provider", { provider: p[0] }, `Delete the ${p[0]} index? Products are kept.`);
+};
+
+$("clearAllBtn").onclick = () => submitJob("clear-catalog", {},
+  "Delete every product, vector, interaction and image file. Continue?");
+
+function watchJob(id) {
+  stopWatch();
+  $("jobBar").classList.remove("hide");
+  const tick = async () => {
+    try {
+      const j = await json(await fetch(`${API}/admin/jobs/${id}`));
+      const pct = j.total ? Math.round(100 * j.processed / j.total) : (j.status === "running" ? 5 : 100);
+      $("jobBar").firstElementChild.style.width = pct + "%";
+      $("jobStatus").textContent = `${j.kind}: ${j.status} — ${j.error || j.detail}` +
+        (j.total ? ` (${j.processed}/${j.total})` : "");
+      if (j.status === "succeeded" || j.status === "failed") {
+        stopWatch();
+        setTimeout(() => { $("jobBar").classList.add("hide"); loadAdmin(); refresh(); }, 600);
+      }
+    } catch (e) { stopWatch(); $("jobStatus").textContent = "error: " + e.message; }
+  };
+  tick();
+  poll = setInterval(tick, 700);
+}
+function stopWatch() { if (poll) { clearInterval(poll); poll = null; } }
+
+refresh();
+</script>
+</body>
+</html>

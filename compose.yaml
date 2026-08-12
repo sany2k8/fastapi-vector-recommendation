@@ -1,0 +1,26 @@
+name: vector-recsys
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: recsys-postgres
+    environment:
+      POSTGRES_USER: recsys
+      POSTGRES_PASSWORD: recsys
+      POSTGRES_DB: recsys
+    ports:
+      # Non-default host port so this stack coexists with other local Postgres instances.
+      - "5439:5432"
+    volumes:
+      - recsys-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recsys -d recsys"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Keep the footprint small; several other Compose stacks share this Docker VM.
+    mem_limit: 512m
+    shm_size: 128mb
+
+volumes:
+  recsys-pgdata:
