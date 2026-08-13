@@ -16,7 +16,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
-from app.core.config import ALL_PROVIDERS, get_settings
+from app.core.config import get_settings
 
 revision: str = "0002"
 down_revision: str | None = "0001"
@@ -26,6 +26,15 @@ depends_on: str | Sequence[str] | None = None
 settings = get_settings()
 DIM = settings.embedding_dim
 CURRENT_PROVIDER = settings.embedding_provider
+
+#: Frozen on purpose — the providers that existed when this migration was written.
+#:
+#: Iterating the live `ALL_PROVIDERS` here was a bug: adding `gemini` and `voyage` to
+#: that Literal retroactively changed what this migration creates, so a fresh database
+#: built five indexes and 0003 then failed with "relation already exists". A migration
+#: is a snapshot of history and must never read config that can change under it.
+#: New providers get their index in a *new* migration.
+PROVIDERS_AT_0002 = ("local_hash", "jina", "cohere")
 
 
 def upgrade() -> None:
@@ -63,7 +72,7 @@ def upgrade() -> None:
 
     # One partial HNSW index per provider: a single shared index would merge unrelated
     # vector spaces into one graph and wreck recall for every provider in it.
-    for name in ALL_PROVIDERS:
+    for name in PROVIDERS_AT_0002:
         op.create_index(
             f"ix_product_embeddings_fused_{name}",
             "product_embeddings",

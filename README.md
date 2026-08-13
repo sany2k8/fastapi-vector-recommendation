@@ -486,6 +486,11 @@ thresholds — behaves the same either way.
 - **`EMBEDDING_DIM` is baked into the schema.** `pgvector` columns are fixed width and the
   migration reads the setting at run time. Changing it means `alembic downgrade base`,
   `upgrade head`, and a re-index.
+- **Migrations must not read live config.** Migration 0002 once built its indexes by iterating
+  the `ALL_PROVIDERS` constant, so adding a provider retroactively changed an old migration and
+  broke every *fresh* database while leaving existing ones fine. Provider names are frozen per
+  revision now, and `tests/integration/test_migrations.py` runs the chain end to end on a
+  throwaway database to catch the class of bug.
 - **Migration 0002 attributes pre-existing vectors to whatever `EMBEDDING_PROVIDER` said at
   migration time.** If you changed that setting between running 0001 and 0002, the carried-over
   vectors are mislabelled — re-index the affected provider. (This bit during development.)
