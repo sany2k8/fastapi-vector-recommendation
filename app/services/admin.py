@@ -4,7 +4,11 @@ Every mutating action runs as a background job with its own database session, be
 the request's session closes as soon as the endpoint returns.
 """
 
+import re
+from urllib.parse import urlparse
+
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import ALL_PROVIDERS, get_settings
 from app.core.db import get_session_factory
@@ -14,12 +18,87 @@ from app.embeddings import available_providers, get_provider, provider_capabilit
 from app.models import Interaction
 from app.repositories import EmbeddingRepository, ProductRepository
 from app.repositories.embedding import ProviderCoverage
-from app.schemas.admin import AdminStatus, JobRead, ProviderStatus
+from app.schemas.admin import (
+    AdminStatus,
+    ImportPreview,
+    JobRead,
+    OfflineImportRequest,
+    ProviderStatus,
+    RemoteImportRequest,
+)
+from app.schemas.importing import FieldMapping
 from app.seeding import SeedingService
+from app.seeding.importers import (
+    PRESETS,
+    ProductDraft,
+    drafts_from_remote,
+    extract_items,
+    make_sku,
+)
+from app.seeding.remote import RemoteSource
 from app.services.catalog import CatalogService
 from app.services.jobs import Job, JobRegistry
 
 log = get_logger(__name__)
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "item"
+
+
+def resolve_remote_source(payload: "RemoteImportRequest") -> tuple[str, FieldMapping, str]:
+    """Work out the URL, field mapping and SKU prefix for a remote import."""
+    if payload.preset:
+        preset = PRESETS.get(payload.preset)
+        if preset is None:
+            raise ValidationError(
+                f"unknown preset {payload.preset!r}. Available: {', '.join(sorted(PRESETS))}"
+            )
+        url = str(preset["url"])
+        mapping = payload.mapping or FieldMapping.model_validate(preset["mapping"])
+        prefix = payload.sku_prefix or payload.preset[:8].upper()
+    else:
+        if not payload.url:
+            raise ValidationError("provide either a preset or a url")
+        url = payload.url
+        mapping = payload.mapping or FieldMapping()
+        host = (urlparse(url).hostname or "remote").split(".")[0]
+        prefix = payload.sku_prefix or slugify(host)[:8].upper()
+    return url, mapping, prefix
+
+
+async def preview_remote(payload: "RemoteImportRequest", session: AsyncSession) -> ImportPreview:
+    """Fetch and map a feed without writing anything — a dry run before committing."""
+    url, mapping, prefix = resolve_remote_source(payload)
+    async with RemoteSource() as source:
+        body = await source.fetch_feed(url)
+
+    available = len(extract_items(body, mapping))
+    drafts = drafts_from_remote(body, mapping, prefix=prefix, limit=payload.limit)
+
+    products = ProductRepository(session)
+    present = 0
+    for draft in drafts:
+        if await products.get_by_sku(draft.sku) is not None:
+            present += 1
+
+    return ImportPreview(
+        source=url,
+        total_available=available,
+        with_images=sum(1 for d in drafts if d.image_url),
+        already_present=present,
+        sample=[
+            {
+                "sku": d.sku,
+                "name": d.name,
+                "category": d.category,
+                "brand": d.brand,
+                "price": float(d.price),
+                "image_url": d.image_url,
+            }
+            for d in drafts[:8]
+        ],
+    )
 
 
 def validate_providers(names: list[str]) -> list[str]:
@@ -143,6 +222,70 @@ class AdminJobs:
             return "re-indexed " + ", ".join(counts)
 
         return self.registry.start("reindex", runner)
+
+    def import_offline(self, payload: OfflineImportRequest) -> Job:
+        """Ingest admin-supplied products, drawing every image locally."""
+        names = validate_providers(payload.providers)
+        drafts = [
+            ProductDraft(
+                sku=p.sku or make_sku(payload.sku_prefix, slugify(p.name), i),
+                name=p.name,
+                description=p.description,
+                category=p.category,
+                brand=p.brand,
+                price=p.price,
+                attributes={**p.attributes, **({"color": p.color} if p.color else {})},
+                generate_image=payload.generate_images,
+            )
+            for i, p in enumerate(payload.products)
+        ]
+
+        async def runner(job: Job) -> str:
+            async def progress(done: int, total: int, detail: str) -> None:
+                await job.report(done, total, detail)
+
+            async with get_session_factory()() as session:
+                result = await SeedingService(session).import_drafts(
+                    drafts, providers=names, progress=progress
+                )
+                await session.commit()
+            return (
+                f"imported {result['created']}, skipped {result['skipped']} existing · "
+                f"indexed with {', '.join(names)}"
+            )
+
+        return self.registry.start("import_offline", runner)
+
+    def import_remote(self, payload: RemoteImportRequest) -> Job:
+        """Fetch a remote JSON feed and ingest it, downloading product photos."""
+        names = validate_providers(payload.providers)
+        url, mapping, prefix = resolve_remote_source(payload)
+
+        async def runner(job: Job) -> str:
+            async def progress(done: int, total: int, detail: str) -> None:
+                await job.report(done, total, detail)
+
+            async with RemoteSource() as source:
+                await job.report(0, 0, f"fetching {url}")
+                drafts = await source.drafts(url, mapping, prefix=prefix, limit=payload.limit)
+
+                async with get_session_factory()() as session:
+                    result = await SeedingService(session).import_drafts(
+                        drafts,
+                        providers=names,
+                        progress=progress,
+                        fetch_image=source.fetch_image if payload.download_images else None,
+                    )
+                    await session.commit()
+
+            failed = result["image_failures"]
+            return (
+                f"imported {result['created']} from {prefix}, skipped {result['skipped']} existing"
+                + (f", {failed} images unavailable" if failed else "")
+                + f" · indexed with {', '.join(names)}"
+            )
+
+        return self.registry.start("import_remote", runner)
 
     def clear_catalog(self) -> Job:
         async def runner(job: Job) -> str:

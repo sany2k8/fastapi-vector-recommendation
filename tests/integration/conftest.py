@@ -46,6 +46,12 @@ async def engine() -> AsyncIterator[AsyncEngine]:
             async with eng.begin() as conn:
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await conn.run_sync(Base.metadata.create_all)
+                # Background admin jobs open their own sessions and commit, so anything
+                # they write escapes the per-test rollback and would otherwise pile up
+                # across runs — and rows from a previous run change ranking assertions.
+                await conn.execute(
+                    text("TRUNCATE products, interactions, product_embeddings CASCADE")
+                )
             _schema_ready = True
         else:
             async with eng.connect() as conn:

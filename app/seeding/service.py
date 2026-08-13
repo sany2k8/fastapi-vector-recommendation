@@ -16,6 +16,7 @@ from app.repositories import EmbeddingRepository, ProductRepository
 from app.schemas import ProductCreate
 from app.seeding.catalog_data import CATALOG, CatalogEntry
 from app.seeding.images import render
+from app.seeding.importers import ProductDraft
 from app.services.catalog import CatalogService
 from app.services.catalog import ProgressHook as CatalogProgressHook
 
@@ -24,6 +25,7 @@ log = get_logger(__name__)
 OVERRIDE_DIR = PROJECT_ROOT / "data" / "images" / "seed"
 
 ProgressHook = Callable[[int, int, str], Awaitable[None]]
+ImageFetcher = Callable[[str], Awaitable[bytes]]
 
 #: Two personas so /users/{id}/recommendations has something to work with.
 DEMO_USERS: dict[str, list[str]] = {
@@ -38,7 +40,7 @@ def load_image(entry: CatalogEntry) -> bytes:
         candidate = OVERRIDE_DIR / f"{entry['sku']}{suffix}"
         if candidate.is_file():
             return candidate.read_bytes()
-    return render(entry)
+    return render(entry["category"], entry["color"])
 
 
 class SeedingService:
@@ -147,6 +149,92 @@ class SeedingService:
                 events += 1
         await self.session.flush()
         return events
+
+    async def import_drafts(
+        self,
+        drafts: list[ProductDraft],
+        *,
+        providers: list[str],
+        progress: ProgressHook | None = None,
+        fetch_image: "ImageFetcher | None" = None,
+    ) -> dict[str, int]:
+        """Insert drafts, then index them with each provider.
+
+        Products are created **unembedded** and the batched re-index runs afterwards.
+        Embedding inline would cost two API calls per product; batching turns a
+        100-product import into a handful of requests, which is the difference between
+        usable and impossible on a rate-limited free tier.
+
+        A product whose image cannot be fetched is still imported — it keeps its text
+        vector and simply has no image one, which the ranking already handles.
+        """
+        created = 0
+        skipped = 0
+        image_failures = 0
+        total = len(drafts)
+        service = CatalogService(self.session, get_provider(providers[0]))
+
+        for index, draft in enumerate(drafts, start=1):
+            if await self.products.get_by_sku(draft.sku) is not None:
+                skipped += 1
+            else:
+                image: bytes | None = None
+                if draft.generate_image:
+                    image = render(draft.category, draft.attributes.get("color"))
+                elif draft.image_url and fetch_image is not None:
+                    try:
+                        image = await fetch_image(draft.image_url)
+                    except Exception as exc:
+                        image_failures += 1
+                        log.warning(
+                            "import.image_failed",
+                            sku=draft.sku,
+                            url=draft.image_url,
+                            error=str(exc),
+                        )
+
+                await service.create(
+                    ProductCreate(
+                        sku=draft.sku,
+                        name=draft.name,
+                        description=draft.description,
+                        category=draft.category,
+                        brand=draft.brand,
+                        price=draft.price,
+                        attributes=dict(draft.attributes),
+                    ),
+                    image=image,
+                    embed=False,
+                )
+                created += 1
+
+            if progress is not None:
+                await progress(index, total, "importing products")
+
+        await self.session.commit()
+
+        indexed = 0
+        for name in providers:
+            worker = CatalogService(self.session, get_provider(name))
+            indexed += await worker.reembed_all(
+                skip_existing=True,
+                commit_each_batch=True,
+                progress=self._relay(progress, f"indexing with {name}"),
+            )
+
+        log.info(
+            "import.completed",
+            created=created,
+            skipped=skipped,
+            image_failures=image_failures,
+            providers=providers,
+        )
+        return {
+            "created": created,
+            "skipped": skipped,
+            "image_failures": image_failures,
+            "indexed": indexed,
+        }
 
     async def clear_provider(self, provider: str) -> int:
         removed = await EmbeddingRepository(self.session).clear_provider(provider)

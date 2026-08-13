@@ -35,7 +35,15 @@ class CatalogService:
         self.products = ProductRepository(session)
         self.embeddings = EmbeddingRepository(session)
 
-    async def create(self, payload: ProductCreate, *, image: bytes | None = None) -> Product:
+    async def create(
+        self, payload: ProductCreate, *, image: bytes | None = None, embed: bool = True
+    ) -> Product:
+        """Create a product, embedding it immediately unless `embed` is False.
+
+        Bulk importers pass `embed=False` and then run `reembed_all`, which batches a
+        whole page of products into one request instead of two per product — the
+        difference between a handful of API calls and hundreds.
+        """
         if await self.products.get_by_sku(payload.sku) is not None:
             raise ValidationError(f"a product with sku {payload.sku!r} already exists")
 
@@ -50,15 +58,17 @@ class CatalogService:
             currency=payload.currency,
             attributes=payload.attributes,
         )
+        stored: bytes | None = None
         if image is not None:
-            product.image_path = store_image(image, product.id)
+            product.image_path, stored = store_image(image, product.id)
         await self.products.add(product)
-        await self._embed_product(product, image=image)
+        if embed:
+            await self._embed_product(product, image=stored)
 
         log.info(
             "catalog.product_created",
             sku=product.sku,
-            provider=self.provider.name,
+            provider=self.provider.name if embed else "deferred",
             with_image=image is not None,
         )
         return product
@@ -93,7 +103,7 @@ class CatalogService:
         """
         product = await self.get_or_404(product_id)
         remove_image(product.image_path)
-        product.image_path = store_image(image, product.id)
+        product.image_path, stored = store_image(image, product.id)
         await self.session.flush()
 
         for name in await self.embeddings.indexed_providers():
@@ -103,7 +113,7 @@ class CatalogService:
                 # Indexed earlier but no longer configured (key removed) — leave it be.
                 log.warning("catalog.provider_unavailable", provider=name)
                 continue
-            await self._embed_product(product, image=image, provider=provider)
+            await self._embed_product(product, image=stored, provider=provider)
 
         log.info("catalog.image_attached", product_id=str(product_id))
         return product

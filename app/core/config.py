@@ -98,14 +98,20 @@ class Settings(BaseSettings):
     #:
     #: Starting points, not laws: re-measure against your own catalogue. Setting a
     #: provider to 0 disables its floor.
-    #: gemini/voyage floors are untested placeholders — measure before trusting them.
+    #: Measured on the demo catalogue by comparing real queries against nonsense ones.
+    #:
+    #: `gemini` is deliberately 0 — **disabled, not untuned**. Its scores do not separate:
+    #: gibberish peaks at 0.605 while genuinely relevant results start at 0.600, so no
+    #: absolute floor can split them, and its within-query spread is too narrow for the
+    #: ratio cutoff to help either. A Gemini index will return `top_k` rows whether or not
+    #: anything relevant exists; judge its results on ranking, not on score.
     provider_min_scores: dict[str, float] = Field(
         default_factory=lambda: {
             "local_hash": 0.06,
             "jina": 0.50,
             "cohere": 0.18,
+            "voyage": 0.29,
             "gemini": 0.0,
-            "voyage": 0.0,
         }
     )
 
@@ -119,6 +125,21 @@ class Settings(BaseSettings):
     # --- Storage --------------------------------------------------------------
     image_dir: Path = PROJECT_ROOT / "data" / "images"
     max_image_bytes: int = 5 * 1024 * 1024
+
+    #: Stored images are downscaled to this longest edge. Beyond costing disk, oversized
+    #: images cost real money: Voyage bills by pixel, so a 4000px photo is ~27x the pixels
+    #: of a 768px one for no retrieval benefit.
+    max_image_dimension: int = 1024
+
+    # --- Remote import ---------------------------------------------------------
+    #: Cap on a fetched product feed.
+    max_import_bytes: int = 8 * 1024 * 1024
+    #: Products accepted in a single import.
+    max_import_items: int = 500
+    #: Disables the SSRF address check. Local fixtures only — never where the admin API
+    #: is reachable by anyone else.
+    allow_private_import_hosts: bool = False
+    import_timeout_seconds: float = 20.0
 
     @model_validator(mode="after")
     def _check_configuration(self) -> "Settings":

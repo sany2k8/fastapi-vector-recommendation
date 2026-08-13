@@ -11,11 +11,16 @@ from app.core.errors import NotFoundError
 from app.schemas.admin import (
     AdminStatus,
     ClearProviderRequest,
+    ImportPresets,
+    ImportPreview,
     JobRead,
+    OfflineImportRequest,
     ReindexRequest,
+    RemoteImportRequest,
     SeedRequest,
 )
-from app.services.admin import AdminJobs, AdminService
+from app.seeding.importers import PRESETS
+from app.services.admin import AdminJobs, AdminService, preview_remote
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -44,6 +49,30 @@ async def reindex(payload: ReindexRequest, registry: RegistryDep) -> JobRead:
         providers=payload.providers, skip_existing=payload.skip_existing
     )
     return JobRead.model_validate(job)
+
+
+@router.get("/import/presets", response_model=ImportPresets)
+async def import_presets() -> ImportPresets:
+    """Known remote feeds, with the field mapping each one needs."""
+    return ImportPresets(presets=PRESETS)
+
+
+@router.post("/import/offline", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
+async def import_offline(payload: OfflineImportRequest, registry: RegistryDep) -> JobRead:
+    """Add products supplied directly, with images drawn locally. No network involved."""
+    return JobRead.model_validate(AdminJobs(registry).import_offline(payload))
+
+
+@router.post("/import/remote/preview", response_model=ImportPreview)
+async def import_remote_preview(payload: RemoteImportRequest, session: SessionDep) -> ImportPreview:
+    """Dry run: fetch and map a feed, write nothing, and report what would land."""
+    return await preview_remote(payload, session)
+
+
+@router.post("/import/remote", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
+async def import_remote(payload: RemoteImportRequest, registry: RegistryDep) -> JobRead:
+    """Import a remote JSON product feed, downloading its photos."""
+    return JobRead.model_validate(AdminJobs(registry).import_remote(payload))
 
 
 @router.post("/clear-catalog", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)

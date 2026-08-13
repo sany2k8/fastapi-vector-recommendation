@@ -1,6 +1,7 @@
 """Admin endpoints: status, background jobs, and the destructive actions."""
 
 import asyncio
+import uuid
 
 import pytest
 from httpx import AsyncClient
@@ -119,6 +120,172 @@ class TestJobs:
         finished = await wait_for(client, job.id, timeout=5)
         assert finished["status"] == "failed"
         assert "kaboom" in finished["error"]
+
+
+class TestOfflineImport:
+    """Adding products with no network: the admin supplies text, we draw the images."""
+
+    @staticmethod
+    def _payload(tag: str, **over: object) -> dict:
+        return {
+            "products": [
+                {
+                    "name": f"Copper Pour-Over Kettle {tag}",
+                    "category": "kettles",
+                    "description": "Gooseneck kettle with a thermometer for pour-over coffee",
+                    "brand": "Halden",
+                    "price": 74.5,
+                    "color": "copper",
+                },
+                {
+                    "name": f"Slate Yoga Mat {tag}",
+                    "category": "fitness",
+                    "description": "Dense closed-cell yoga mat with an alignment stripe",
+                    "brand": "Volta",
+                    "price": 62.0,
+                    "color": "slate",
+                },
+            ],
+            "providers": ["local_hash"],
+            "sku_prefix": tag,
+            **over,
+        }
+
+    async def test_products_are_created_and_indexed_without_network(
+        self, client: AsyncClient
+    ) -> None:
+        tag = uuid.uuid4().hex[:6].upper()
+        r = await client.post("/api/v1/admin/import/offline", json=self._payload(tag))
+        assert r.status_code == 202
+
+        job = await wait_for(client, r.json()["id"])
+        assert job["status"] == "succeeded", job["error"]
+        assert "imported 2" in job["detail"]
+
+        listing = (await client.get("/api/v1/products", params={"category": "kettles"})).json()
+        names = [i["name"] for i in listing["items"]]
+        assert any(tag in n for n in names)
+        assert all(i["has_image"] for i in listing["items"] if tag in i["name"])
+
+    async def test_imported_products_are_searchable(self, client: AsyncClient) -> None:
+        tag = uuid.uuid4().hex[:6].upper()
+        job = await wait_for(
+            client,
+            (await client.post("/api/v1/admin/import/offline", json=self._payload(tag))).json()[
+                "id"
+            ],
+        )
+        assert job["status"] == "succeeded", job["error"]
+
+        # Query the run's unique tag: jobs commit outside the test transaction, so runs
+        # can leave near-identical products behind and a generic query would be ranking
+        # them against each other rather than testing retrievability.
+        body = (
+            await client.post(
+                "/api/v1/search/text",
+                json={
+                    "query": f"Copper Pour-Over Kettle {tag} gooseneck thermometer",
+                    "top_k": 5,
+                    "provider": "local_hash",
+                    "min_score_ratio": 0.0,
+                },
+            )
+        ).json()
+        assert any(tag in h["product"]["name"] for h in body["hits"])
+
+    async def test_unknown_categories_and_colours_still_render(self, client: AsyncClient) -> None:
+        """Imported catalogues use words the built-in palette has never seen."""
+        from app.seeding.images import colour_for, render
+
+        a, b = render("quantum-widgets", "ultraviolet"), render("quantum-widgets", "ochre")
+        assert a[:2] == b"\xff\xd8" and len(a) > 1000  # a real JPEG
+        assert a != b, "different colours must produce different images"
+        assert colour_for("ultraviolet") == colour_for("ultraviolet")  # deterministic
+        assert colour_for("ultraviolet") != colour_for("ochre")
+
+    async def test_re_importing_skips_rather_than_duplicating(self, client: AsyncClient) -> None:
+        tag = uuid.uuid4().hex[:6].upper()
+        first = await wait_for(
+            client,
+            (await client.post("/api/v1/admin/import/offline", json=self._payload(tag))).json()[
+                "id"
+            ],
+        )
+        assert "imported 2" in first["detail"]
+
+        second = await wait_for(
+            client,
+            (await client.post("/api/v1/admin/import/offline", json=self._payload(tag))).json()[
+                "id"
+            ],
+        )
+        assert "imported 0" in second["detail"]
+        assert "skipped 2" in second["detail"]
+
+    async def test_an_unconfigured_provider_is_rejected(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/v1/admin/import/offline", json=self._payload("X", providers=["jina"])
+        )
+        assert r.status_code == 422
+
+
+class TestRemoteImport:
+    async def test_presets_are_listed_with_their_mapping(self, client: AsyncClient) -> None:
+        body = (await client.get("/api/v1/admin/import/presets")).json()
+        assert "dummyjson" in body["presets"]
+        assert body["presets"]["dummyjson"]["mapping"]["name"] == "title"
+
+    async def test_a_private_url_is_refused_before_any_fetch(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/v1/admin/import/remote/preview",
+            json={"url": "http://127.0.0.1:5439/products", "limit": 5},
+        )
+        assert r.status_code == 422
+        assert "non-public" in r.json()["error"]["message"]
+
+    async def test_unknown_preset_is_rejected(self, client: AsyncClient) -> None:
+        r = await client.post("/api/v1/admin/import/remote/preview", json={"preset": "nope"})
+        assert r.status_code == 422
+        assert "unknown preset" in r.json()["error"]["message"]
+
+    async def test_missing_url_and_preset_is_rejected(self, client: AsyncClient) -> None:
+        r = await client.post("/api/v1/admin/import/remote/preview", json={"limit": 5})
+        assert r.status_code == 422
+
+
+class TestImageNormalisation:
+    async def test_oversized_uploads_are_downscaled_before_storage(
+        self, client: AsyncClient
+    ) -> None:
+        """Voyage bills image embeddings by pixel, so huge photos cost real money."""
+        import io
+
+        from PIL import Image
+
+        from app.core.config import get_settings
+        from app.services.images import normalize_image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (3000, 2000), (200, 40, 40)).save(buf, format="JPEG")
+        canonical, suffix = normalize_image(buf.getvalue())
+
+        with Image.open(io.BytesIO(canonical)) as out:
+            assert max(out.size) == get_settings().max_image_dimension
+        assert suffix == ".jpg"
+        assert len(canonical) < len(buf.getvalue())
+
+    async def test_small_images_are_left_untouched(self, client: AsyncClient) -> None:
+        import io
+
+        from PIL import Image
+
+        from app.services.images import normalize_image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 200), (10, 80, 200)).save(buf, format="PNG")
+        canonical, suffix = normalize_image(buf.getvalue())
+        assert canonical == buf.getvalue()
+        assert suffix == ".png"
 
 
 class TestAdminDisabled:

@@ -4,204 +4,568 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Multimodal Product Recommender</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔍</text></svg>" />
 <style>
-  :root {
-    --bg:#0f1117; --panel:#171a23; --line:#262b38; --text:#e6e8ee;
-    --muted:#8b93a7; --accent:#6ea8fe; --warn:#f0b429; --danger:#e5484d; --ok:#30a46c;
+/* ============================ design tokens ============================ */
+:root {
+  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f1f3f7; --surface-3:#e9ecf2;
+  --border:#e2e6ee; --border-strong:#cfd5e2;
+  --text:#11141b; --text-dim:#5b6579; --text-faint:#8b94a7;
+  --accent:#4f46e5; --accent-soft:#eef0fe; --accent-fg:#ffffff;
+  --cyan:#0891b2; --cyan-soft:#e0f4f9;
+  --ok:#15803d; --ok-soft:#e6f5ec;
+  --warn:#b45309; --warn-soft:#fdf3e3;
+  --danger:#dc2626; --danger-soft:#fdeced;
+  --r-sm:6px; --r:10px; --r-lg:14px;
+  --shadow-sm:0 1px 2px rgba(16,20,30,.06);
+  --shadow:0 4px 14px rgba(16,20,30,.09);
+  --shadow-lg:0 18px 50px rgba(16,20,30,.20);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+/* Scrollbars and form controls must follow the *resolved* theme. Defaulting this to
+   dark made the scrollbar gutter dark on a light page. */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0a0c11; --surface:#12151c; --surface-2:#181c25; --surface-3:#212633;
+    --border:#232936; --border-strong:#333a4a;
+    --text:#e9ecf4; --text-dim:#98a2b8; --text-faint:#6b7488;
+    --accent:#7c8cff; --accent-soft:#1c2140; --accent-fg:#0a0c11;
+    --cyan:#38bdf8; --cyan-soft:#12283a;
+    --ok:#4ade80; --ok-soft:#10281c;
+    --warn:#fbbf24; --warn-soft:#2a2110;
+    --danger:#f87171; --danger-soft:#2d1618;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow:0 4px 16px rgba(0,0,0,.45);
+    --shadow-lg:0 20px 60px rgba(0,0,0,.6);
   }
-  @media (prefers-color-scheme: light) {
-    :root { --bg:#f6f7fa; --panel:#fff; --line:#e2e5ec; --text:#1a1d26; --muted:#666e85; --accent:#2563eb; }
-  }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-    font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { padding:20px 26px; border-bottom:1px solid var(--line); }
-  h1 { margin:0 0 4px; font-size:19px; letter-spacing:-.01em; }
-  h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
-  .sub { color:var(--muted); font-size:13px; }
-  main { max-width:1280px; margin:0 auto; padding:20px 26px 60px; }
-  .banner { border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:16px; display:none;
-    background:color-mix(in srgb,var(--warn) 14%,transparent); border:1px solid var(--warn); }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:16px; }
-  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  input[type=text], select { flex:1; min-width:200px; padding:9px 12px; border-radius:8px;
-    border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; font-size:14px; }
-  select { flex:0 0 auto; min-width:160px; }
-  button { padding:9px 15px; border-radius:8px; border:1px solid var(--accent); background:var(--accent);
-    color:#fff; font-size:14px; cursor:pointer; }
-  button.ghost { background:transparent; color:var(--accent); }
-  button.danger { background:transparent; color:var(--danger); border-color:var(--danger); }
-  button:disabled { opacity:.45; cursor:default; }
-  button.tiny { padding:4px 9px; font-size:12px; }
-  label { font-size:13px; color:var(--muted); }
-  .slider { display:flex; align-items:center; gap:10px; margin-top:12px; }
-  .slider input[type=range] { flex:1; }
-  .slider .val { font-variant-numeric:tabular-nums; min-width:38px; text-align:right; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(185px,1fr)); gap:14px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; background:#fff; }
-  .card .body { padding:9px 11px; }
-  .card .name { font-size:13px; font-weight:600; margin-bottom:3px; }
-  .card .meta { font-size:12px; color:var(--muted); }
-  .score { font-variant-numeric:tabular-nums; font-size:11px; color:var(--accent); margin-top:5px; }
-  .status { color:var(--muted); font-size:13px; margin:10px 0; min-height:20px; }
-  .tabs { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
-  .tabs button { background:transparent; color:var(--muted); border:1px solid var(--line); }
-  .tabs button[aria-selected=true] { color:#fff; background:var(--accent); border-color:var(--accent); }
-  .drop { border:1.5px dashed var(--line); border-radius:10px; padding:20px; text-align:center;
-    color:var(--muted); cursor:pointer; font-size:13px; }
-  .drop.has { border-color:var(--accent); color:var(--text); }
-  .hide { display:none !important; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
-  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11px; border:1px solid var(--line); }
-  .pill.yes { color:var(--ok); border-color:var(--ok); }
-  .pill.no { color:var(--muted); }
-  .compare { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
-  .compare .col { border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--panel); }
-  .compare h3 { margin:0 0 3px; font-size:14px; }
-  .compare .colsub { font-size:12px; color:var(--muted); margin-bottom:10px; }
-  .compare ol { margin:0; padding:0; list-style:none; counter-reset:rank; }
-  .compare li { font-size:13px; margin-bottom:8px; display:flex; gap:9px; align-items:center;
-    counter-increment:rank; }
-  .compare li::before { content:counter(rank) "."; color:var(--muted); font-size:11px;
-    min-width:14px; text-align:right; flex:0 0 auto; }
-  .compare li img { width:38px; height:38px; border-radius:6px; object-fit:cover;
-    background:#fff; flex:0 0 auto; border:1px solid var(--line); }
-  .compare li .noimg { width:38px; height:38px; border-radius:6px; flex:0 0 auto;
-    border:1px dashed var(--line); }
-  .compare li .txt { min-width:0; }
-  .compare li .nm { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .compare .s { color:var(--accent); font-variant-numeric:tabular-nums; font-size:11px; }
-  .bar { height:6px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:8px; }
-  .bar > div { height:100%; background:var(--accent); width:0%; transition:width .3s; }
-  .checks { display:flex; gap:14px; flex-wrap:wrap; margin:10px 0; }
-  .checks label { display:flex; gap:6px; align-items:center; color:var(--text); font-size:13px; }
-  code { font-size:12px; background:color-mix(in srgb,var(--muted) 15%,transparent); padding:1px 5px; border-radius:4px; }
+}
+:root[data-theme="dark"] {
+  --bg:#0a0c11; --surface:#12151c; --surface-2:#181c25; --surface-3:#212633;
+  --border:#232936; --border-strong:#333a4a;
+  --text:#e9ecf4; --text-dim:#98a2b8; --text-faint:#6b7488;
+  --accent:#7c8cff; --accent-soft:#1c2140; --accent-fg:#0a0c11;
+  --cyan:#38bdf8; --cyan-soft:#12283a;
+  --ok:#4ade80; --ok-soft:#10281c;
+  --warn:#fbbf24; --warn-soft:#2a2110;
+  --danger:#f87171; --danger-soft:#2d1618;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow:0 4px 16px rgba(0,0,0,.45);
+  --shadow-lg:0 20px 60px rgba(0,0,0,.6);
+}
+
+/* ============================ base ============================ */
+*,*::before,*::after { box-sizing:border-box; }
+html { -webkit-text-size-adjust:100%; }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3 { margin:0; font-weight:650; letter-spacing:-.011em; }
+button,input,select,textarea { font:inherit; color:inherit; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+.num { font-variant-numeric:tabular-nums; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after { animation-duration:.001ms !important; transition-duration:.001ms !important; }
+}
+
+/* ============================ layout ============================ */
+.topbar {
+  position:sticky; top:0; z-index:40; background:color-mix(in srgb,var(--surface) 88%,transparent);
+  backdrop-filter:saturate(1.6) blur(12px); border-bottom:1px solid var(--border);
+}
+.topbar-in {
+  max-width:1340px; margin:0 auto; padding:12px 22px;
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+}
+.brand { display:flex; align-items:center; gap:10px; margin-right:auto; min-width:0; }
+.brand .mark {
+  width:30px; height:30px; border-radius:8px; flex:none; display:grid; place-items:center;
+  background:linear-gradient(140deg,var(--accent),var(--cyan)); color:#fff;
+}
+.brand h1 { font-size:15px; }
+.brand .tag { font-size:12px; color:var(--text-faint); }
+.stat-strip { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+main { max-width:1340px; margin:0 auto; padding:20px 22px 80px; }
+
+/* ============================ primitives ============================ */
+.chip {
+  display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:999px;
+  font-size:11.5px; font-weight:550; border:1px solid var(--border);
+  background:var(--surface-2); color:var(--text-dim); white-space:nowrap;
+}
+.chip.ok { color:var(--ok); background:var(--ok-soft); border-color:color-mix(in srgb,var(--ok) 32%,transparent); }
+.chip.warn { color:var(--warn); background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 32%,transparent); }
+.chip.dim { color:var(--text-faint); }
+.chip.accent { color:var(--accent); background:var(--accent-soft); border-color:color-mix(in srgb,var(--accent) 32%,transparent); }
+.dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+
+.btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  padding:9px 15px; border-radius:var(--r-sm); border:1px solid var(--accent);
+  background:var(--accent); color:var(--accent-fg); font-size:14px; font-weight:550;
+  cursor:pointer; transition:transform .12s ease, filter .15s ease, background .15s ease;
+  white-space:nowrap;
+}
+.btn:hover:not(:disabled) { filter:brightness(1.08); }
+.btn:active:not(:disabled) { transform:translateY(1px); }
+.btn:disabled { opacity:.5; cursor:not-allowed; }
+.btn.ghost { background:transparent; color:var(--text); border-color:var(--border-strong); }
+.btn.ghost:hover:not(:disabled) { background:var(--surface-2); }
+.btn.quiet { background:transparent; border-color:transparent; color:var(--text-dim); }
+.btn.quiet:hover:not(:disabled) { background:var(--surface-2); color:var(--text); }
+.btn.danger { background:transparent; color:var(--danger); border-color:color-mix(in srgb,var(--danger) 45%,transparent); }
+.btn.danger:hover:not(:disabled) { background:var(--danger-soft); }
+.btn.sm { padding:5px 10px; font-size:12.5px; }
+.btn.icon { padding:8px; border-radius:var(--r-sm); }
+
+.field {
+  width:100%; padding:11px 13px; border-radius:var(--r-sm); border:1px solid var(--border-strong);
+  background:var(--surface); color:var(--text); font-size:14.5px;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+.field:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+select.field { cursor:pointer; }
+
+.panel {
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg);
+  padding:18px; box-shadow:var(--shadow-sm); margin-bottom:16px;
+}
+.panel h2 {
+  font-size:11.5px; text-transform:uppercase; letter-spacing:.07em;
+  color:var(--text-faint); font-weight:650; margin-bottom:12px;
+}
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.grow { flex:1 1 240px; min-width:0; }
+
+/* ============================ tabs ============================ */
+.tabs {
+  display:inline-flex; gap:2px; padding:3px; margin-bottom:16px;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px; flex-wrap:wrap;
+}
+.tabs button {
+  padding:7px 14px; border-radius:7px; border:none; background:transparent;
+  color:var(--text-dim); font-size:13.5px; font-weight:550; cursor:pointer;
+  transition:background .15s ease, color .15s ease;
+}
+.tabs button:hover { color:var(--text); }
+.tabs button[aria-selected="true"] { background:var(--surface); color:var(--text); box-shadow:var(--shadow-sm); }
+
+/* ============================ sliders ============================ */
+.ctrl { display:grid; grid-template-columns:1fr auto; gap:4px 12px; align-items:center; margin-top:14px; }
+.ctrl-label { font-size:12.5px; color:var(--text-dim); display:flex; align-items:center; gap:6px; }
+.ctrl-val { font-size:12.5px; font-weight:600; color:var(--text); min-width:34px; text-align:right; }
+.ctrl input[type=range] { grid-column:1 / -1; width:100%; accent-color:var(--accent); cursor:pointer; }
+.ctrl-ends { grid-column:1 / -1; display:flex; justify-content:space-between;
+  font-size:11px; color:var(--text-faint); margin-top:-3px; }
+
+.help { cursor:help; border-bottom:1px dotted var(--text-faint); }
+
+/* ============================ dropzone ============================ */
+.drop {
+  border:1.5px dashed var(--border-strong); border-radius:var(--r);
+  padding:22px; text-align:center; color:var(--text-dim); cursor:pointer; font-size:13.5px;
+  transition:border-color .15s ease, background .15s ease;
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+}
+.drop:hover, .drop.over { border-color:var(--accent); background:var(--accent-soft); color:var(--text); }
+.drop.has { border-style:solid; border-color:var(--accent); background:var(--surface-2); }
+.drop img { width:64px; height:64px; object-fit:cover; border-radius:8px; border:1px solid var(--border); }
+
+/* ============================ results ============================ */
+.meta-line {
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  margin:4px 0 14px; font-size:12.5px; color:var(--text-dim); min-height:22px;
+}
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:14px; }
+.card {
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  overflow:hidden; cursor:pointer; text-align:left; padding:0; width:100%;
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+  animation:rise .28s ease backwards;
+}
+.card:hover { transform:translateY(-3px); box-shadow:var(--shadow); border-color:var(--border-strong); }
+@keyframes rise { from { opacity:0; transform:translateY(8px); } }
+.card .thumb { position:relative; aspect-ratio:1; background:#fff; }
+.card .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.card .thumb .rank {
+  position:absolute; top:8px; left:8px; width:22px; height:22px; border-radius:6px;
+  background:color-mix(in srgb,#000 62%,transparent); color:#fff; font-size:11px; font-weight:650;
+  display:grid; place-items:center; backdrop-filter:blur(4px);
+}
+.card .body { padding:11px 12px 12px; }
+.card .name { font-size:13.5px; font-weight:600; line-height:1.3; margin-bottom:3px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.card .sub { font-size:12px; color:var(--text-faint); }
+.card .price { font-weight:600; color:var(--text-dim); }
+
+/* score bar: text share in accent, image share in cyan — encodes the fusion */
+.sbar { display:flex; height:4px; border-radius:99px; overflow:hidden; background:var(--surface-3); margin-top:9px; }
+.sbar i { display:block; height:100%; }
+.sbar .t { background:var(--accent); }
+.sbar .i { background:var(--cyan); }
+.sline { display:flex; justify-content:space-between; font-size:11px; color:var(--text-faint); margin-top:5px; }
+.sline b { color:var(--accent); font-weight:650; }
+
+.skel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); overflow:hidden; }
+.skel .sh { background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 37%,var(--surface-2) 63%);
+  background-size:400% 100%; animation:shimmer 1.3s ease infinite; }
+@keyframes shimmer { from { background-position:100% 0; } to { background-position:0 0; } }
+.skel .a { aspect-ratio:1; } .skel .b { height:12px; margin:11px 12px; border-radius:4px; }
+.skel .c { height:10px; margin:0 12px 14px; width:60%; border-radius:4px; }
+
+.empty { text-align:center; padding:52px 20px; color:var(--text-dim); }
+.empty .big { font-size:30px; margin-bottom:10px; opacity:.65; }
+.empty h3 { font-size:15px; margin-bottom:6px; color:var(--text); }
+.empty p { margin:0 auto; max-width:420px; font-size:13.5px; }
+
+.examples { display:flex; gap:7px; flex-wrap:wrap; margin-top:12px; }
+.ex {
+  padding:5px 11px; border-radius:999px; border:1px solid var(--border);
+  background:var(--surface-2); color:var(--text-dim); font-size:12.5px; cursor:pointer;
+  transition:all .15s ease;
+}
+.ex:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+
+/* ============================ compare ============================ */
+.cmp { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(268px,1fr)); }
+.cmp .col { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px; }
+.cmp .col h3 { font-size:14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.cmp .colsub { font-size:11.5px; color:var(--text-faint); margin:5px 0 11px; }
+.cmp ol { margin:0; padding:0; list-style:none; }
+.cmp li {
+  display:flex; gap:9px; align-items:center; padding:5px 6px; border-radius:7px; cursor:pointer;
+  transition:background .13s ease;
+}
+.cmp li:hover { background:var(--surface-2); }
+.cmp li .r { font-size:11px; color:var(--text-faint); min-width:15px; text-align:right; flex:none; }
+.cmp li img, .cmp li .noimg { width:36px; height:36px; border-radius:6px; flex:none; border:1px solid var(--border); }
+.cmp li img { object-fit:cover; background:#fff; }
+.cmp li .noimg { border-style:dashed; }
+.cmp li .tx { min-width:0; flex:1; }
+.cmp li .nm { display:block; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cmp li .sc { font-size:11px; color:var(--accent); font-weight:600; }
+.agree { width:5px; height:5px; border-radius:50%; flex:none; }
+
+/* ============================ drawer ============================ */
+.scrim {
+  position:fixed; inset:0; background:rgba(6,8,14,.55); backdrop-filter:blur(2px);
+  z-index:60; opacity:0; pointer-events:none; transition:opacity .22s ease;
+}
+.scrim.open { opacity:1; pointer-events:auto; }
+.drawer {
+  position:fixed; top:0; right:0; bottom:0; width:min(440px,100%); z-index:61;
+  background:var(--surface); border-left:1px solid var(--border); box-shadow:var(--shadow-lg);
+  transform:translateX(100%); transition:transform .26s cubic-bezier(.32,.72,0,1);
+  display:flex; flex-direction:column;
+}
+.drawer.open { transform:none; }
+.drawer header { padding:14px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+.drawer header h3 { font-size:14px; flex:1; }
+.drawer .scroll { overflow-y:auto; padding:18px; flex:1; }
+.drawer .hero { width:100%; aspect-ratio:1; object-fit:cover; border-radius:var(--r); background:#fff; border:1px solid var(--border); }
+.kv { display:grid; grid-template-columns:auto 1fr; gap:7px 14px; font-size:13px; margin-top:16px; }
+.kv dt { color:var(--text-faint); }
+.kv dd { margin:0; }
+.acts { display:flex; gap:7px; flex-wrap:wrap; margin-top:16px; }
+
+/* ============================ admin ============================ */
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--border); }
+th { color:var(--text-faint); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+tbody tr:last-child td { border-bottom:none; }
+.checks { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.check {
+  display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:var(--r-sm);
+  border:1px solid var(--border); background:var(--surface-2); font-size:13px; cursor:pointer;
+  transition:all .15s ease; user-select:none;
+}
+.check:hover { border-color:var(--border-strong); }
+.check:has(input:checked) { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
+.check input { accent-color:var(--accent); cursor:pointer; margin:0; }
+.check.off { opacity:.45; cursor:not-allowed; }
+.bar { height:6px; border-radius:99px; background:var(--surface-3); overflow:hidden; margin-top:10px; }
+.bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--cyan));
+  width:0; transition:width .35s ease; }
+
+/* ============================ toasts ============================ */
+.toasts { position:fixed; bottom:18px; right:18px; z-index:80; display:flex; flex-direction:column; gap:9px; }
+.toast {
+  background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent);
+  border-radius:var(--r-sm); box-shadow:var(--shadow); padding:11px 14px; font-size:13px;
+  max-width:340px; animation:slidein .24s ease;
+}
+.toast.ok { border-left-color:var(--ok); } .toast.err { border-left-color:var(--danger); }
+@keyframes slidein { from { opacity:0; transform:translateX(18px); } }
+
+kbd {
+  font:11px var(--mono); padding:2px 5px; border-radius:4px;
+  border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text-dim);
+}
+.hide { display:none !important; }
+@media (max-width:640px) {
+  .topbar-in, main { padding-left:14px; padding-right:14px; }
+  .grid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Multimodal Product Recommender</h1>
-  <div class="sub" id="providerLine">loading…</div>
-</header>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      </span>
+      <div style="min-width:0">
+        <h1>Multimodal Product Recommender</h1>
+        <div class="tag" id="tagline">text + image vector search on pgvector</div>
+      </div>
+    </div>
+    <div class="stat-strip" id="stats"></div>
+    <button class="btn icon quiet" id="themeBtn" title="Toggle theme" aria-label="Toggle colour theme">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+    </button>
+  </div>
+</div>
 
 <main>
-  <div class="banner" id="banner"></div>
-
-  <div class="tabs" role="tablist">
-    <button role="tab" data-mode="text" aria-selected="true">Text search</button>
-    <button role="tab" data-mode="image" aria-selected="false">Image search</button>
+  <div class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-mode="text" aria-selected="true">Text</button>
+    <button role="tab" data-mode="image" aria-selected="false">Image</button>
     <button role="tab" data-mode="multimodal" aria-selected="false">Text + image</button>
     <button role="tab" data-mode="user" aria-selected="false">For you</button>
     <button role="tab" data-mode="admin" aria-selected="false">Admin</button>
   </div>
 
-  <!-- ---------------- search ---------------- -->
-  <div id="searchPanel">
+  <div id="banner" class="panel hide" style="border-color:color-mix(in srgb,var(--warn) 40%,transparent);
+       background:var(--warn-soft)"></div>
+
+  <!-- ========================= search ========================= -->
+  <section id="searchView">
     <div class="panel">
       <div class="row" id="textRow">
-        <input type="text" id="query" placeholder="e.g. warm waterproof jacket for winter hiking" />
+        <input class="field grow" type="text" id="query" autocomplete="off"
+               placeholder="Describe what you're looking for…  (press / to focus)" />
+        <button class="btn" id="go">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          Search
+        </button>
       </div>
+      <div class="examples" id="examples"></div>
 
       <div id="imageRow" class="hide" style="margin-top:12px">
-        <div class="drop" id="drop">Click or drop a product image here</div>
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a product image">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M3 15v3a3 3 0 003 3h12a3 3 0 003-3v-3"/></svg>
+          <span id="dropText">Click, or drop a product image here</span>
+        </div>
         <input type="file" id="file" accept="image/*" class="hide" />
       </div>
 
       <div id="userRow" class="hide" style="margin-top:12px">
         <div class="row">
-          <select id="userId">
-            <option value="demo-outdoors">demo-outdoors (hiking / outdoors history)</option>
-            <option value="demo-desk">demo-desk (desk setup history)</option>
-          </select>
+          <select class="field grow" id="userId" style="flex:1 1 260px"></select>
+          <button class="btn ghost sm" id="clearMe" title="Forget the interactions recorded in this browser">
+            Reset “you”</button>
         </div>
-        <div class="slider">
-          <label>diversity (MMR λ)</label>
+        <div class="ctrl">
+          <span class="ctrl-label"><span class="help" title="MMR λ. 1.0 = pure relevance; lower mixes in variety so the feed isn't five near-identical products.">diversity</span></span>
+          <span class="ctrl-val num" id="diversityVal">0.70</span>
           <input type="range" id="diversity" min="0" max="1" step="0.05" value="0.7" />
-          <span class="val" id="diversityVal">0.70</span>
+          <div class="ctrl-ends"><span>varied</span><span>most relevant</span></div>
         </div>
       </div>
 
-      <div class="row" style="margin-top:12px">
-        <label for="provider">index</label>
-        <select id="provider"></select>
-        <label class="checks" style="margin:0"><input type="checkbox" id="compare" /> compare all indexes</label>
+      <div class="row" style="margin-top:14px; gap:14px">
+        <label class="row" style="gap:7px; flex:0 0 auto">
+          <span style="font-size:12.5px;color:var(--text-dim)">index</span>
+          <select class="field" id="provider" style="padding:7px 10px;font-size:13px"></select>
+        </label>
+        <label class="check" style="flex:0 0 auto">
+          <input type="checkbox" id="compare" /> compare all indexes
+        </label>
       </div>
 
-      <div class="slider" id="weightRow">
-        <label title="w in: score = w*text_similarity + (1-w)*image_similarity">
-          text ← weight → image</label>
-        <input type="range" id="weight" min="0" max="1" step="0.05" value="0.6" />
-        <span class="val" id="weightVal">0.60</span>
+      <div id="weightRow">
+        <div class="ctrl">
+          <span class="ctrl-label"><span class="help" title="score = w × text_similarity + (1 − w) × image_similarity — how much the wording counts versus how the product looks.">text ↔ image weight</span></span>
+          <span class="ctrl-val num" id="weightVal">0.60</span>
+          <input type="range" id="weight" min="0" max="1" step="0.05" value="0.6" />
+          <div class="ctrl-ends"><span>looks only</span><span>wording only</span></div>
+        </div>
       </div>
 
-      <div class="slider">
-        <label title="Keep only hits scoring at least this fraction of the best hit">
-          relevance cutoff</label>
+      <div class="ctrl">
+        <span class="ctrl-label"><span class="help" title="Keeps only hits scoring at least this fraction of the best hit. 0 disables it.">relevance cutoff</span></span>
+        <span class="ctrl-val num" id="ratioVal">0.45</span>
         <input type="range" id="ratio" min="0" max="0.95" step="0.05" value="0.45" />
-        <span class="val" id="ratioVal">0.45</span>
-      </div>
-
-      <div class="row" style="margin-top:14px">
-        <button id="go">Search</button>
-        <button class="ghost" id="clear">Clear image</button>
+        <div class="ctrl-ends"><span>show everything</span><span>strict</span></div>
       </div>
     </div>
 
-    <div class="status" id="status"></div>
-    <div class="compare hide" id="compareOut"></div>
+    <div class="meta-line" id="meta" aria-live="polite"></div>
+    <div class="cmp hide" id="compareOut"></div>
     <div class="grid" id="results"></div>
-  </div>
+  </section>
 
-  <!-- ---------------- admin ---------------- -->
-  <div id="adminPanel" class="hide">
+  <!-- ========================= admin ========================= -->
+  <section id="adminView" class="hide">
     <div class="panel">
       <h2>Indexes</h2>
-      <table id="providerTable"><tbody></tbody></table>
-      <div class="sub" style="margin-top:10px" id="catalogLine"></div>
+      <div style="overflow-x:auto"><table id="provTable"></table></div>
+      <div class="meta-line" id="catalogLine" style="margin-bottom:0"></div>
     </div>
 
     <div class="panel">
       <h2>Build</h2>
-      <div class="sub">Pick which indexes to write. Each provider is stored separately, so
-        re-indexing one never overwrites another.</div>
-      <div class="checks" id="providerChecks"></div>
+      <p style="margin:0;font-size:13px;color:var(--text-dim)">
+        Each provider is stored separately, so re-indexing one never overwrites another.
+        Rate-limited providers are paced automatically — use <b>resume</b> after a failure.
+      </p>
+      <div class="checks" id="provChecks"></div>
       <div class="checks">
-        <label><input type="checkbox" id="withImages" checked /> embed product images</label>
-        <label><input type="checkbox" id="resetFirst" /> wipe catalogue first</label>
-        <label title="Only embed products this index is missing — use after a rate-limit failure">
-          <input type="checkbox" id="skipExisting" /> resume (skip already-indexed)</label>
+        <label class="check"><input type="checkbox" id="withImages" checked /> embed images</label>
+        <label class="check"><input type="checkbox" id="skipExisting" /> resume (skip indexed)</label>
+        <label class="check"><input type="checkbox" id="resetFirst" /> wipe catalogue first</label>
       </div>
       <div class="row">
-        <button id="seedBtn">Seed catalogue</button>
-        <button class="ghost" id="reindexBtn">Re-index selected</button>
-        <button class="danger" id="clearProviderBtn">Clear selected index</button>
-        <button class="danger" id="clearAllBtn">Delete everything</button>
+        <button class="btn" id="seedBtn">Seed catalogue</button>
+        <button class="btn ghost" id="reindexBtn">Re-index selected</button>
+        <button class="btn danger" id="clearProvBtn">Clear selected index</button>
+        <button class="btn danger" id="clearAllBtn">Delete everything</button>
       </div>
-      <div class="status" id="jobStatus"></div>
-      <div class="bar hide" id="jobBar"><div></div></div>
+      <div class="meta-line" id="jobLine" style="margin-bottom:0"></div>
+      <div class="bar hide" id="jobBar"><i></i></div>
+    </div>
+
+    <div class="panel">
+      <h2>Add data</h2>
+      <div class="tabs" role="tablist" id="addTabs" style="margin-bottom:14px">
+        <button role="tab" data-add="offline" aria-selected="true">Offline (generated)</button>
+        <button role="tab" data-add="remote" aria-selected="false">Remote feed</button>
+      </div>
+
+      <div id="addOffline">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-dim)">
+          Paste products as JSON. Images are <b>drawn locally</b> — no network, no downloads.
+          Unknown categories and colours get a stable derived shape and hue.
+        </p>
+        <textarea class="field" id="offlineJson" rows="9" spellcheck="false"
+          style="font:12.5px var(--mono); resize:vertical"></textarea>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="genImages" checked /> generate images</label>
+          <label class="check" style="cursor:default">
+            prefix <input class="field" id="offlinePrefix" value="GEN"
+              style="padding:2px 7px;font-size:12px;width:72px;margin-left:6px" /></label>
+        </div>
+        <div class="row">
+          <button class="btn" id="offlineBtn">Import products</button>
+          <button class="btn quiet sm" id="offlineExample">Reset example</button>
+          <label class="btn ghost sm" style="cursor:pointer">
+            Load .json file<input type="file" id="offlineFile" accept="application/json,.json" class="hide" />
+          </label>
+        </div>
+      </div>
+
+      <div id="addRemote" class="hide">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-dim)">
+          Fetch a JSON product feed and download its photos. The server refuses private and
+          link-local addresses, and re-checks every redirect.
+        </p>
+        <div class="row">
+          <select class="field" id="remotePreset" style="flex:0 0 auto;min-width:210px"></select>
+          <input class="field grow" id="remoteUrl" placeholder="https://example.com/products.json" />
+        </div>
+        <div class="checks">
+          <label class="check" style="cursor:default">limit
+            <input class="field" id="remoteLimit" type="number" min="1" max="500" value="24"
+              style="padding:2px 7px;font-size:12px;width:70px;margin-left:6px" /></label>
+          <label class="check"><input type="checkbox" id="remoteImages" checked /> download images</label>
+        </div>
+        <details style="margin:6px 0 12px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim)">field mapping</summary>
+          <div class="row" style="margin-top:9px" id="mapRow"></div>
+        </details>
+        <div class="row">
+          <button class="btn ghost" id="previewBtn">Preview</button>
+          <button class="btn" id="remoteBtn">Import</button>
+        </div>
+        <div id="previewOut" style="margin-top:14px"></div>
+      </div>
     </div>
 
     <div class="panel">
       <h2>Recent jobs</h2>
-      <table id="jobTable"><tbody></tbody></table>
+      <div style="overflow-x:auto"><table id="jobTable"></table></div>
     </div>
-  </div>
+  </section>
 </main>
 
-<script>
-const API = "/api/v1";
-let mode = "text";
-let imageFile = null;
-let indexed = [];
-let caps = {};
-let poll = null;
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Product details">
+  <header>
+    <h3 id="dTitle">Product</h3>
+    <button class="btn icon quiet" id="dClose" aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="scroll" id="dBody"></div>
+</aside>
 
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+const API = "/api/v1";
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => (n === null || n === undefined) ? "—" : n.toFixed(3);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const f3 = (n) => (n === null || n === undefined) ? "—" : n.toFixed(3);
+
+const state = {
+  mode: "text", imageFile: null, caps: {}, indexed: [], poll: null,
+  lastItems: [], me: localStorage.getItem("recsys-me") || ("you-" + Math.random().toString(36).slice(2, 8)),
+};
+localStorage.setItem("recsys-me", state.me);
+
+const EXAMPLES = [
+  "something to keep me dry in a storm",
+  "gift for someone who works from home",
+  "hand thrown ceramic for morning coffee",
+  "lightweight shoe for long road miles",
+];
+
+/* ---------------- theme ---------------- */
+const applyTheme = (t) => {
+  if (t) document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+};
+applyTheme(localStorage.getItem("recsys-theme"));
+$("themeBtn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const next = cur ? (cur === "dark" ? "light" : "dark") : (dark ? "light" : "dark");
+  localStorage.setItem("recsys-theme", next); applyTheme(next);
+};
+
+/* ---------------- toasts ---------------- */
+function toast(msg, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 250); }, 3800);
+}
 
 async function json(res) {
   const body = await res.json().catch(() => ({}));
@@ -213,243 +577,376 @@ async function json(res) {
 async function refresh() {
   try {
     const d = await json(await fetch("/health/ready"));
-    indexed = Object.keys(d.indexed_providers || {});
-    const counts = Object.entries(d.indexed_providers || {})
-      .map(([k, v]) => `${k} ${v.products}`).join(" · ") || "nothing indexed yet";
-    $("providerLine").textContent =
-      `default: ${d.default_provider} · ${d.embedding_dim}d · pgvector ${d.pgvector} · ` +
-      `${d.products} products · indexed: ${counts}`;
+    state.caps = d.provider_info || {};
+    state.indexed = Object.keys(d.indexed_providers || {}).sort();
 
-    const sel = $("provider");
-    const previous = sel.value;
-    sel.innerHTML = indexed.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")
-      || `<option value="">— none indexed —</option>`;
-    if (indexed.includes(previous)) sel.value = previous;
-    else if (indexed.includes(d.default_provider)) sel.value = d.default_provider;
+    $("stats").innerHTML =
+      `<span class="chip"><span class="dot" style="color:var(--ok)"></span>pgvector ${esc(d.pgvector)}</span>` +
+      `<span class="chip">${d.products} products</span>` +
+      `<span class="chip">${d.embedding_dim}d</span>` +
+      state.indexed.map(p => {
+        const c = state.caps[p] || {};
+        const cls = p === d.default_provider ? "chip accent" : "chip";
+        return `<span class="${cls}" title="${c.cross_modal ? "cross-modal" : c.supports_images ? "not cross-modal" : "text-only"}">${esc(p)} ${d.indexed_providers[p].products}</span>`;
+      }).join("");
+    $("tagline").textContent = `default index: ${d.default_provider} · ${d.products} products`;
 
-    caps = d.provider_info || {};
+    const sel = $("provider"), prev = sel.value;
+    sel.innerHTML = state.indexed.length
+      ? state.indexed.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")
+      : `<option value="">— nothing indexed —</option>`;
+    sel.value = state.indexed.includes(prev) ? prev
+      : (state.indexed.includes(d.default_provider) ? d.default_provider : (state.indexed[0] || ""));
     showBanner();
-  } catch (e) {
-    $("providerLine").textContent = "API unreachable — is the server running?";
+    renderUsers();
+  } catch {
+    $("stats").innerHTML = `<span class="chip warn">API unreachable</span>`;
   }
+}
+
+/* The banner is the honest-capability surface: it says what the selected index
+   genuinely cannot do, so noise is never read as a result. */
+function showBanner() {
+  const name = $("provider").value, c = state.caps[name], b = $("banner");
+  if (!c || c.cross_modal) { b.classList.add("hide"); return; }
+  b.classList.remove("hide");
+  b.innerHTML = c.supports_images
+    ? `<b>${esc(name)} is not cross-modal.</b> Text and images sit in separate spaces here, so
+       text→image matching is meaningless on this index. Text→text and image→image both work.`
+    : `<b>${esc(name)} is text-only.</b> This model doesn't embed images, so products carry no
+       image vector on this index and image search is unavailable.`;
+}
+
+function renderUsers() {
+  const sel = $("userId"), prev = sel.value;
+  sel.innerHTML =
+    `<option value="${esc(state.me)}">you (this browser) — built from your clicks</option>` +
+    `<option value="demo-outdoors">demo-outdoors — hiking history</option>` +
+    `<option value="demo-desk">demo-desk — desk setup history</option>`;
+  if (prev) sel.value = prev;
 }
 
 /* ---------------- tabs ---------------- */
-document.querySelectorAll('[role=tab]').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('[role=tab]').forEach(b => b.setAttribute('aria-selected', b === btn));
-    mode = btn.dataset.mode;
-    const admin = mode === "admin";
-    $("adminPanel").classList.toggle("hide", !admin);
-    $("searchPanel").classList.toggle("hide", admin);
-    if (admin) { loadAdmin(); return; }
-    $("textRow").classList.toggle("hide", mode === "image" || mode === "user");
-    $("imageRow").classList.toggle("hide", mode === "text" || mode === "user");
-    $("userRow").classList.toggle("hide", mode !== "user");
-    $("weightRow").classList.toggle("hide", mode === "user");
-  };
+$("tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("[role=tab]"); if (!btn) return;
+  [...$("tabs").children].forEach(b => b.setAttribute("aria-selected", String(b === btn)));
+  state.mode = btn.dataset.mode;
+  closeDrawer();
+  const admin = state.mode === "admin";
+  $("adminView").classList.toggle("hide", !admin);
+  $("searchView").classList.toggle("hide", admin);
+  if (admin) { loadAdmin(); return; }
+  $("textRow").classList.toggle("hide", state.mode === "image" || state.mode === "user");
+  $("examples").classList.toggle("hide", state.mode !== "text" && state.mode !== "multimodal");
+  $("imageRow").classList.toggle("hide", state.mode === "text" || state.mode === "user");
+  $("userRow").classList.toggle("hide", state.mode !== "user");
+  $("weightRow").classList.toggle("hide", state.mode === "user");
 });
 
-$("drop").onclick = () => $("file").click();
-$("drop").ondragover = (e) => e.preventDefault();
-$("drop").ondrop = (e) => { e.preventDefault(); setFile(e.dataTransfer.files[0]); };
-$("file").onchange = (e) => setFile(e.target.files[0]);
-$("clear").onclick = () => setFile(null);
+/* ---------------- image picking ---------------- */
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } };
+["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
+$("file").onchange = e => setFile(e.target.files[0]);
+
 function setFile(f) {
-  imageFile = f || null;
-  $("drop").textContent = f ? `selected: ${f.name}` : "Click or drop a product image here";
-  $("drop").classList.toggle("has", !!f);
-}
-
-for (const [id, out] of [["weight","weightVal"],["diversity","diversityVal"],["ratio","ratioVal"]]) {
-  $(id).oninput = (e) => $(out).textContent = (+e.target.value).toFixed(2);
-}
-$("provider").onchange = showBanner;
-$("query").onkeydown = (e) => { if (e.key === "Enter") run(); };
-$("go").onclick = run;
-
-/* ---------------- search ---------------- */
-async function run() {
-  $("go").disabled = true;
-  $("status").textContent = "searching…";
-  $("results").innerHTML = "";
-  $("compareOut").innerHTML = "";
-  $("compareOut").classList.add("hide");
-  try {
-    if ($("compare").checked && mode !== "user") return await runCompare();
-    const data = await dispatch($("provider").value);
-    const items = data.hits || data.items || [];
-    $("status").textContent = summarise(data, items);
-    render(items);
-  } catch (err) {
-    $("status").textContent = "error: " + err.message;
-  } finally {
-    $("go").disabled = false;
+  state.imageFile = f || null;
+  drop.classList.toggle("has", !!f);
+  const old = drop.querySelector("img"); if (old) old.remove();
+  if (f) {
+    $("dropText").innerHTML = `${esc(f.name)} · <span style="color:var(--text-faint)">click to replace</span>`;
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(f); img.alt = "";
+    drop.insertBefore(img, drop.firstChild);
+  } else {
+    $("dropText").textContent = "Click, or drop a product image here";
   }
 }
 
-function summarise(data, items) {
-  const bits = [`${items.length} results in ${data.took_ms} ms`, `index: ${data.provider}`];
-  if (data.strategy) bits.push(`strategy: ${data.strategy}`);
-  if (data.candidates_considered !== undefined) bits.push(`${data.candidates_considered} candidates`);
-  if (data.below_threshold) bits.push(`${data.below_threshold} cut by threshold`);
-  if (data.signals_used) bits.push(`${data.signals_used} signals`);
-  return bits.join(" · ");
+/* ---------------- controls ---------------- */
+[["weight","weightVal"],["diversity","diversityVal"],["ratio","ratioVal"]].forEach(([id,out]) => {
+  $(id).oninput = e => $(out).textContent = (+e.target.value).toFixed(2);
+});
+$("provider").onchange = showBanner;
+$("query").onkeydown = e => { if (e.key === "Enter") run(); };
+$("go").onclick = run;
+$("clearMe").onclick = async () => {
+  state.me = "you-" + Math.random().toString(36).slice(2, 8);
+  localStorage.setItem("recsys-me", state.me);
+  renderUsers(); toast("Started a fresh “you” profile", "ok");
+};
+$("examples").innerHTML = EXAMPLES.map(q => `<button class="ex">${esc(q)}</button>`).join("");
+$("examples").addEventListener("click", e => {
+  const b = e.target.closest(".ex"); if (!b) return;
+  $("query").value = b.textContent; run();
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeDrawer();
+  if (e.key === "/" && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+    e.preventDefault(); $("query").focus(); $("query").select();
+  }
+});
+
+/* ---------------- search ---------------- */
+function skeletons(n = 8) {
+  $("results").innerHTML = Array.from({ length: n }, () =>
+    `<div class="skel"><div class="a sh"></div><div class="b sh"></div><div class="c sh"></div></div>`).join("");
 }
 
+async function run() {
+  if (state.mode === "admin") return;
+  $("go").disabled = true;
+  $("compareOut").classList.add("hide");
+  $("compareOut").innerHTML = "";
+  $("meta").innerHTML = `<span class="chip dim">searching…</span>`;
+  skeletons();
+  const t0 = performance.now();
+  try {
+    if ($("compare").checked && state.mode !== "user") { await runCompare(); return; }
+    const data = await dispatch($("provider").value);
+    const items = data.hits || data.items || [];
+    state.lastItems = items;
+    $("meta").innerHTML = metaChips(data, items, performance.now() - t0);
+    renderCards(items);
+  } catch (err) {
+    $("results").innerHTML = "";
+    $("meta").innerHTML = `<span class="chip warn">${esc(err.message)}</span>`;
+    toast(err.message, "err");
+  } finally { $("go").disabled = false; }
+}
+
+function metaChips(d, items, wall) {
+  const bits = [`<span class="chip accent">${items.length} results</span>`,
+                `<span class="chip">${esc(d.provider)}</span>`,
+                `<span class="chip num">${Math.round(d.took_ms)} ms server · ${Math.round(wall)} ms total</span>`];
+  if (d.strategy) bits.push(`<span class="chip">${esc(d.strategy.replace(/_/g, " "))}</span>`);
+  if (d.below_threshold) bits.push(`<span class="chip dim">${d.below_threshold} below cutoff</span>`);
+  if (d.signals_used) bits.push(`<span class="chip">${d.signals_used} signals</span>`);
+  if (d.cross_modal === false) bits.push(`<span class="chip warn">not cross-modal</span>`);
+  return bits.join("");
+}
+
+async function dispatch(provider) {
+  const topK = 12, ratio = +$("ratio").value, weight = +$("weight").value;
+  const qs = (extra = {}) => new URLSearchParams({
+    top_k: topK, min_score_ratio: ratio, ...(provider ? { provider } : {}), ...extra }).toString();
+
+  if (state.mode === "user") {
+    const u = encodeURIComponent($("userId").value);
+    return json(await fetch(`${API}/users/${u}/recommendations?${qs({ diversity: $("diversity").value })}`));
+  }
+  if (state.mode === "text") {
+    return json(await fetch(`${API}/search/text`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: $("query").value, top_k: topK, provider: provider || null,
+                             text_weight: weight, min_score_ratio: ratio }) }));
+  }
+  if (!state.imageFile) throw new Error("Choose an image first");
+  const fd = new FormData(); fd.append("image", state.imageFile);
+  if (state.mode === "image") return json(await fetch(`${API}/search/image?${qs()}`, { method:"POST", body: fd }));
+  fd.append("query", $("query").value);
+  return json(await fetch(`${API}/search/multimodal?${qs({ text_weight: weight })}`, { method:"POST", body: fd }));
+}
+
+function renderCards(items) {
+  if (!items.length) {
+    $("results").innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <div class="big">🫗</div><h3>Nothing above the cutoff</h3>
+      <p>Every candidate scored too far below the best match. Lower the relevance cutoff,
+         or try different wording.</p></div>`;
+    return;
+  }
+  $("results").innerHTML = items.map((hit, i) => {
+    const p = hit.product;
+    const t = hit.text_similarity ?? 0, im = hit.image_similarity ?? 0;
+    const tot = Math.max(t + im, 0.0001);
+    const img = p.image_url
+      ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">`
+      : `<div style="display:grid;place-items:center;height:100%;color:var(--text-faint);font-size:11px">no photo</div>`;
+    return `<button class="card" data-i="${i}" style="animation-delay:${Math.min(i * 22, 260)}ms">
+      <div class="thumb">${img}<span class="rank num">${i + 1}</span></div>
+      <div class="body">
+        <div class="name">${esc(p.name)}</div>
+        <div class="sub">${esc(p.category)} · <span class="price num">$${p.price.toFixed(2)}</span></div>
+        <div class="sbar" title="text vs image contribution">
+          <i class="t" style="width:${(t / tot * 100).toFixed(1)}%"></i>
+          <i class="i" style="width:${(im / tot * 100).toFixed(1)}%"></i>
+        </div>
+        <div class="sline"><span>score <b class="num">${f3(hit.score)}</b></span>
+          <span class="num">txt ${f3(hit.text_similarity)} · img ${f3(hit.image_similarity)}</span></div>
+      </div></button>`;
+  }).join("");
+  $("results").querySelectorAll(".card").forEach(c =>
+    c.onclick = () => openDrawer(items[+c.dataset.i]));
+}
+
+/* ---------------- compare ---------------- */
 async function runCompare() {
-  if (!indexed.length) throw new Error("no indexes built yet — use the Admin tab");
-  const results = await Promise.all(indexed.map(async p => {
-    try { return [p, await dispatch(p)]; }
-    catch (e) { return [p, { error: e.message }]; }
+  if (!state.indexed.length) throw new Error("No indexes built yet — use the Admin tab");
+  const results = await Promise.all(state.indexed.map(async p => {
+    try { return [p, await dispatch(p)]; } catch (e) { return [p, { error: e.message }]; }
   }));
+
+  // Count how many indexes surface each product, so agreement is visible at a glance.
+  const seen = {};
+  results.forEach(([, d]) => (d.hits || d.items || []).slice(0, 10)
+    .forEach(h => seen[h.product.id] = (seen[h.product.id] || 0) + 1));
+  const total = results.filter(([, d]) => !d.error).length;
+
+  $("results").innerHTML = "";
   $("compareOut").classList.remove("hide");
   $("compareOut").innerHTML = results.map(([p, d]) => {
     if (d.error) return `<div class="col"><h3>${esc(p)}</h3>
       <div class="colsub" style="color:var(--danger)">${esc(d.error)}</div></div>`;
-    const items = d.hits || d.items || [];
-    // Thumbnails matter most here: comparing image search across indexes is meaningless
-    // if you can only read the product names.
-    const rows = items.slice(0, 10).map(h => {
-      const p = h.product;
-      const thumb = p.image_url
-        ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">`
-        : `<span class="noimg"></span>`;
-      return `<li>${thumb}<span class="txt"><span class="nm">${esc(p.name)}</span>
-        <span class="s">${fmt(h.score)} · ${esc(p.category)}</span></span></li>`;
-    }).join("") || "<li><span class='s'>no results above threshold</span></li>";
-    return `<div class="col">
-      <h3>${esc(p)} ${d.cross_modal ? '<span class="pill yes">cross-modal</span>' : '<span class="pill no">not cross-modal</span>'}</h3>
-      <div class="colsub">${d.took_ms} ms · w=${fmt(d.text_weight)} · ${d.below_threshold ?? 0} cut</div>
+    const items = (d.hits || d.items || []).slice(0, 10);
+    const c = state.caps[p] || {};
+    const badge = c.cross_modal ? `<span class="chip ok">cross-modal</span>`
+      : c.supports_images ? `<span class="chip dim">not cross-modal</span>`
+      : `<span class="chip dim">text-only</span>`;
+    const rows = items.map((h, i) => {
+      const pr = h.product, n = seen[pr.id] || 1;
+      const col = n === total && total > 1 ? "var(--ok)" : n > 1 ? "var(--accent)" : "transparent";
+      const thumb = pr.image_url ? `<img src="${esc(pr.image_url)}" alt="" loading="lazy">`
+                                 : `<span class="noimg"></span>`;
+      return `<li data-pid="${esc(pr.id)}" title="${n} of ${total} indexes rank this in their top 10">
+        <span class="r num">${i + 1}</span>${thumb}
+        <span class="tx"><span class="nm">${esc(pr.name)}</span>
+        <span class="sc num">${f3(h.score)}</span> <span style="color:var(--text-faint);font-size:11px">· ${esc(pr.category)}</span></span>
+        <span class="agree" style="background:${col}"></span></li>`;
+    }).join("") || `<li><span class="sc">nothing above cutoff</span></li>`;
+    return `<div class="col"><h3>${esc(p)} ${badge}</h3>
+      <div class="colsub num">${Math.round(d.took_ms)} ms · w=${f3(d.text_weight)} · ${d.below_threshold ?? 0} cut</div>
       <ol>${rows}</ol></div>`;
   }).join("");
-  $("status").textContent = `compared ${results.length} indexes on the same query`;
+
+  $("compareOut").querySelectorAll("li[data-pid]").forEach(li =>
+    li.onclick = () => openDrawerById(li.dataset.pid));
+  $("meta").innerHTML = `<span class="chip accent">${results.length} indexes compared</span>` +
+    `<span class="chip"><span class="dot" style="color:var(--ok)"></span>agreed by all</span>` +
+    `<span class="chip"><span class="dot" style="color:var(--accent)"></span>agreed by some</span>`;
 }
 
-async function dispatch(providerName) {
-  const weight = +$("weight").value;
-  const ratio = +$("ratio").value;
-  const topK = 12;
-  const qp = (extra) => new URLSearchParams({ top_k: topK, min_score_ratio: ratio,
-    ...(providerName ? { provider: providerName } : {}), ...extra }).toString();
+/* ---------------- drawer ---------------- */
+function closeDrawer() { $("drawer").classList.remove("open"); $("scrim").classList.remove("open"); }
+$("scrim").onclick = closeDrawer;
+$("dClose").onclick = closeDrawer;
 
-  if (mode === "user") {
-    const u = encodeURIComponent($("userId").value);
-    return json(await fetch(`${API}/users/${u}/recommendations?${qp({ diversity: $("diversity").value })}`));
-  }
-  if (mode === "text") {
-    return json(await fetch(`${API}/search/text`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: $("query").value, top_k: topK, provider: providerName || null,
-                             text_weight: weight, min_score_ratio: ratio })
-    }));
-  }
-  if (!imageFile) throw new Error("choose an image first");
-  const fd = new FormData();
-  fd.append("image", imageFile);
-  if (mode === "image") return json(await fetch(`${API}/search/image?${qp({})}`, { method: "POST", body: fd }));
-  fd.append("query", $("query").value);
-  return json(await fetch(`${API}/search/multimodal?${qp({ text_weight: weight })}`, { method: "POST", body: fd }));
+async function openDrawerById(id) {
+  try { openDrawer({ product: await json(await fetch(`${API}/products/${id}`)) }); }
+  catch (e) { toast(e.message, "err"); }
 }
 
-function render(items) {
-  if (!items.length) {
-    $("results").innerHTML = `<div class="sub">Nothing scored above the relevance cutoff.
-      Lower it, or widen the query.</div>`;
-    return;
-  }
-  $("results").innerHTML = items.map(hit => {
-    const p = hit.product;
-    const img = p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">` : "";
-    return `<div class="card">${img}<div class="body">
-      <div class="name">${esc(p.name)}</div>
-      <div class="meta">${esc(p.category)} · ${esc(p.brand ?? "")} · $${p.price.toFixed(2)}</div>
-      <div class="score">score ${fmt(hit.score)} &nbsp; txt ${fmt(hit.text_similarity)} &nbsp; img ${fmt(hit.image_similarity)}</div>
-      <div style="margin-top:7px"><button class="ghost tiny" data-similar="${esc(p.id)}">more like this</button></div>
-    </div></div>`;
-  }).join("");
-  $("results").querySelectorAll("[data-similar]").forEach(b => b.onclick = () => similar(b.dataset.similar));
+function openDrawer(hit) {
+  const p = hit.product;
+  $("dTitle").textContent = p.name;
+  const attrs = Object.entries(p.attributes || {});
+  $("dBody").innerHTML = `
+    ${p.image_url ? `<img class="hero" src="${esc(p.image_url)}" alt="">` : ""}
+    <dl class="kv">
+      <dt>SKU</dt><dd class="num">${esc(p.sku)}</dd>
+      <dt>Category</dt><dd>${esc(p.category)}</dd>
+      <dt>Brand</dt><dd>${esc(p.brand || "—")}</dd>
+      <dt>Price</dt><dd class="num">$${p.price.toFixed(2)} ${esc(p.currency)}</dd>
+      ${hit.score !== undefined ? `<dt>Score</dt><dd class="num">${f3(hit.score)}
+        <span style="color:var(--text-faint)">(txt ${f3(hit.text_similarity)} · img ${f3(hit.image_similarity)})</span></dd>` : ""}
+      ${attrs.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+    </dl>
+    <p style="font-size:13.5px;color:var(--text-dim);margin-top:14px">${esc(p.description)}</p>
+    <div class="acts">
+      <button class="btn sm" data-act="similar">More like this</button>
+      <button class="btn ghost sm" data-act="like">♥ Like</button>
+      <button class="btn ghost sm" data-act="cart">+ Cart</button>
+      <button class="btn ghost sm" data-act="purchase">Purchase</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-faint);margin-top:10px">
+      Recording an event feeds the <b>For you</b> tab for <span class="num">${esc(state.me)}</span>.</p>`;
+
+  $("dBody").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+    const act = b.dataset.act;
+    if (act === "similar") { closeDrawer(); return similar(p.id); }
+    try {
+      await json(await fetch(`${API}/interactions`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: state.me, product_id: p.id, event: act }) }));
+      toast(`Recorded “${act}” — check the For you tab`, "ok");
+    } catch (e) { toast(e.message, "err"); }
+  });
+
+  $("drawer").classList.add("open"); $("scrim").classList.add("open");
+  $("dClose").focus();
 }
 
 async function similar(id) {
-  $("status").textContent = "finding similar products…";
+  $("meta").innerHTML = `<span class="chip dim">finding similar products…</span>`;
+  skeletons(6);
   try {
     const p = $("provider").value;
-    const data = await json(await fetch(
-      `${API}/products/${id}/similar?top_k=12&diversity=0.8&min_score_ratio=${$("ratio").value}` +
-      (p ? `&provider=${encodeURIComponent(p)}` : "")));
-    $("status").textContent = summarise(data, data.items);
+    const d = await json(await fetch(`${API}/products/${id}/similar?top_k=12&diversity=0.8` +
+      `&min_score_ratio=${$("ratio").value}` + (p ? `&provider=${encodeURIComponent(p)}` : "")));
     $("compareOut").classList.add("hide");
-    render(data.items);
-  } catch (e) { $("status").textContent = "error: " + e.message; }
+    $("meta").innerHTML = metaChips(d, d.items, 0);
+    renderCards(d.items);
+  } catch (e) { $("meta").innerHTML = `<span class="chip warn">${esc(e.message)}</span>`; }
 }
 
 /* ---------------- admin ---------------- */
+const yn = (b) => b ? `<span class="chip ok">yes</span>` : `<span class="chip dim">no</span>`;
+const picked = () => [...document.querySelectorAll("input[name=prov]:checked")].map(c => c.value);
+
 async function loadAdmin() {
   try {
     const d = await json(await fetch(`${API}/admin/status`));
-    $("catalogLine").textContent =
-      `${d.products} products (${d.products_with_images} with images) · ${d.interactions} interactions · ` +
-      `${d.embedding_dim}d · default cutoff ${d.default_min_score_ratio}`;
+    $("catalogLine").innerHTML =
+      `<span class="chip">${d.products} products</span>` +
+      `<span class="chip">${d.products_with_images} with images</span>` +
+      `<span class="chip">${d.interactions} interactions</span>` +
+      `<span class="chip">${d.embedding_dim}d</span>` +
+      `<span class="chip dim">default cutoff ${d.default_min_score_ratio}</span>`;
 
-    $("providerTable").querySelector("tbody").innerHTML =
-      `<tr><th>provider</th><th>configured</th><th>indexed</th><th>images</th><th>cross-modal</th><th>products</th><th>model</th></tr>` +
+    $("provTable").innerHTML =
+      `<thead><tr><th>provider</th><th>configured</th><th>indexed</th><th>images</th>
+       <th>cross-modal</th><th>products</th><th>model</th></tr></thead><tbody>` +
       d.providers.map(p => `<tr>
-        <td><b>${esc(p.name)}</b>${p.is_default ? ' <span class="pill">default</span>' : ''}</td>
-        <td>${pill(p.configured)}</td><td>${pill(p.indexed)}</td>
-        <td>${p.supports_images ? pill(true) : '<span class="pill no">text only</span>'}</td>
-        <td>${pill(p.cross_modal)}</td>
-        <td>${p.products}${p.with_images ? ` (${p.with_images} img)` : ""}</td>
-        <td class="sub">${esc(p.model || "—")}</td></tr>`).join("");
+        <td><b>${esc(p.name)}</b>${p.is_default ? ` <span class="chip accent">default</span>` : ""}</td>
+        <td>${yn(p.configured)}</td><td>${yn(p.indexed)}</td>
+        <td>${p.supports_images ? yn(true) : `<span class="chip dim">text only</span>`}</td>
+        <td>${yn(p.cross_modal)}</td>
+        <td class="num">${p.products}${p.with_images ? ` <span style="color:var(--text-faint)">(${p.with_images} img)</span>` : ""}</td>
+        <td style="color:var(--text-dim)">${esc(p.model || "—")}</td></tr>`).join("") + `</tbody>`;
 
-    $("providerChecks").innerHTML = d.providers.filter(p => p.configured).map(p =>
-      `<label><input type="checkbox" name="prov" value="${esc(p.name)}" ${p.is_default ? "checked" : ""}/> ${esc(p.name)}</label>`
+    $("provChecks").innerHTML = d.providers.map(p => p.configured
+      ? `<label class="check"><input type="checkbox" name="prov" value="${esc(p.name)}"
+           ${p.is_default ? "checked" : ""}/> ${esc(p.name)}</label>`
+      : `<label class="check off" title="No API key configured"><input type="checkbox" disabled/> ${esc(p.name)}</label>`
     ).join("");
 
-    $("jobTable").querySelector("tbody").innerHTML =
-      `<tr><th>job</th><th>status</th><th>detail</th></tr>` +
+    $("jobTable").innerHTML = `<thead><tr><th>job</th><th>status</th><th>detail</th></tr></thead><tbody>` +
       (d.recent_jobs.length ? d.recent_jobs.map(j => `<tr>
         <td>${esc(j.kind)}</td>
-        <td style="color:${j.status === 'failed' ? 'var(--danger)' : j.status === 'succeeded' ? 'var(--ok)' : 'var(--accent)'}">${esc(j.status)}</td>
-        <td class="sub">${esc(j.error || j.detail)}</td></tr>`).join("")
-        : `<tr><td colspan="3" class="sub">no jobs yet</td></tr>`);
+        <td>${j.status === "failed" ? `<span class="chip" style="color:var(--danger)">failed</span>`
+            : j.status === "succeeded" ? `<span class="chip ok">succeeded</span>`
+            : `<span class="chip accent">${esc(j.status)}</span>`}</td>
+        <td style="color:var(--text-dim)">${esc(j.error || j.detail)}</td></tr>`).join("")
+        : `<tr><td colspan="3" style="color:var(--text-faint)">no jobs yet</td></tr>`) + `</tbody>`;
 
     if (d.active_job) watchJob(d.active_job.id); else stopWatch();
-  } catch (e) {
-    $("jobStatus").textContent = "error: " + e.message;
-  }
+    if (!state.presets) loadPresets();
+  } catch (e) { toast(e.message, "err"); }
 }
-/* The banner is the honest-capability surface: it must say what the *selected* index
-   genuinely cannot do, rather than letting a user read noise as a result. */
-function showBanner() {
-  const name = $("provider").value;
-  const c = caps[name];
-  const banner = $("banner");
-  if (!c || c.cross_modal) { banner.style.display = "none"; return; }
-
-  banner.style.display = "block";
-  banner.innerHTML = c.supports_images
-    ? `<b>${esc(name)} is not cross-modal.</b> It embeds text and images into <i>separate</i> ` +
-      "spaces, so text→image matching is meaningless on this index. Text→text and image→image " +
-      "both work. Switch to <code>jina</code>, <code>cohere</code> or <code>voyage</code> for " +
-      "true cross-modal search."
-    : `<b>${esc(name)} is text-only.</b> This model does not embed images at all, so products ` +
-      "carry no image vector on this index and image search is unavailable here. Text search " +
-      "works normally.";
-}
-
-const pill = (b) => b ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>';
-const picked = () => [...document.querySelectorAll('input[name=prov]:checked')].map(c => c.value);
 
 async function submitJob(path, body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
   try {
     const job = await json(await fetch(`${API}/admin/${path}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {})
-    }));
+      body: JSON.stringify(body || {}) }));
+    toast(`Started ${job.kind}`, "ok");
     watchJob(job.id);
-  } catch (e) { $("jobStatus").textContent = "error: " + e.message; }
+  } catch (e) { toast(e.message, "err"); $("jobLine").innerHTML = `<span class="chip warn">${esc(e.message)}</span>`; }
 }
 
 $("seedBtn").onclick = () => submitJob("seed", {
@@ -459,14 +956,122 @@ $("seedBtn").onclick = () => submitJob("seed", {
 $("reindexBtn").onclick = () => submitJob("reindex",
   { providers: picked(), skip_existing: $("skipExisting").checked });
 
-$("clearProviderBtn").onclick = () => {
+$("clearProvBtn").onclick = () => {
   const p = picked();
-  if (p.length !== 1) { $("jobStatus").textContent = "select exactly one index to clear"; return; }
+  if (p.length !== 1) { toast("Select exactly one index to clear", "err"); return; }
   submitJob("clear-provider", { provider: p[0] }, `Delete the ${p[0]} index? Products are kept.`);
 };
 
 $("clearAllBtn").onclick = () => submitJob("clear-catalog", {},
   "Delete every product, vector, interaction and image file. Continue?");
+
+/* ---------------- add data ---------------- */
+const MAP_FIELDS = ["items_path","sku","name","description","category","brand","price","image_url"];
+const EXAMPLE_PRODUCTS = [
+  { name: "Copper Pour-Over Kettle", category: "kettles", brand: "Halden", price: 74.5,
+    color: "copper", description: "Gooseneck kettle with a built-in thermometer for pour-over coffee" },
+  { name: "Slate Yoga Mat", category: "fitness", brand: "Volta", price: 62,
+    color: "slate", description: "Dense closed-cell yoga mat with an alignment stripe" },
+];
+$("offlineJson").value = JSON.stringify(EXAMPLE_PRODUCTS, null, 2);
+$("offlineExample").onclick = () => $("offlineJson").value = JSON.stringify(EXAMPLE_PRODUCTS, null, 2);
+$("offlineFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $("offlineJson").value = await f.text();
+  toast(`Loaded ${f.name}`, "ok");
+};
+
+$("addTabs").addEventListener("click", e => {
+  const b = e.target.closest("[role=tab]"); if (!b) return;
+  [...$("addTabs").children].forEach(x => x.setAttribute("aria-selected", String(x === b)));
+  $("addOffline").classList.toggle("hide", b.dataset.add !== "offline");
+  $("addRemote").classList.toggle("hide", b.dataset.add !== "remote");
+});
+
+$("mapRow").innerHTML = MAP_FIELDS.map(f =>
+  `<label style="font-size:11.5px;color:var(--text-faint)">${f}
+     <input class="field" data-map="${f}" style="padding:4px 8px;font-size:12px;width:118px"/></label>`
+).join("");
+
+async function loadPresets() {
+  try {
+    const d = await json(await fetch(`${API}/admin/import/presets`));
+    const entries = Object.entries(d.presets);
+    $("remotePreset").innerHTML = entries.map(([k, v]) =>
+      `<option value="${esc(k)}">${esc(v.label || k)}</option>`).join("") +
+      `<option value="">— custom URL —</option>`;
+    state.presets = d.presets;
+    applyPreset();
+  } catch { /* admin may be disabled; the custom URL path still works */ }
+}
+$("remotePreset").onchange = applyPreset;
+
+function applyPreset() {
+  const key = $("remotePreset").value;
+  const preset = (state.presets || {})[key];
+  $("remoteUrl").value = preset ? preset.url : "";
+  $("remoteUrl").disabled = !!preset;
+  const mapping = preset ? preset.mapping : {};
+  $("mapRow").querySelectorAll("[data-map]").forEach(i => {
+    i.value = mapping[i.dataset.map] ?? "";
+    i.placeholder = mapping[i.dataset.map] ?? "";
+  });
+}
+
+function remoteBody() {
+  const key = $("remotePreset").value;
+  const mapping = {};
+  $("mapRow").querySelectorAll("[data-map]").forEach(i => mapping[i.dataset.map] = i.value);
+  return {
+    ...(key ? { preset: key } : { url: $("remoteUrl").value }),
+    mapping,
+    limit: +$("remoteLimit").value,
+    download_images: $("remoteImages").checked,
+    providers: picked(),
+  };
+}
+
+$("previewBtn").onclick = async () => {
+  $("previewOut").innerHTML = `<span class="chip dim">fetching…</span>`;
+  try {
+    const d = await json(await fetch(`${API}/admin/import/remote/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(remoteBody()) }));
+    $("previewOut").innerHTML =
+      `<div class="meta-line">
+         <span class="chip accent">${d.sample.length} shown</span>
+         <span class="chip">${d.total_available} available</span>
+         <span class="chip">${d.with_images} with photos</span>
+         ${d.already_present ? `<span class="chip warn">${d.already_present} already imported</span>` : ""}
+       </div>
+       <div style="overflow-x:auto"><table>
+         <thead><tr><th></th><th>sku</th><th>name</th><th>category</th><th>price</th></tr></thead>
+         <tbody>${d.sample.map(s => `<tr>
+           <td>${s.image_url ? `<img src="${esc(s.image_url)}" alt="" loading="lazy"
+                 style="width:34px;height:34px;object-fit:cover;border-radius:6px;background:#fff">` : "—"}</td>
+           <td class="num">${esc(s.sku)}</td><td>${esc(s.name)}</td>
+           <td style="color:var(--text-dim)">${esc(s.category)}</td>
+           <td class="num">$${Number(s.price).toFixed(2)}</td></tr>`).join("")}</tbody>
+       </table></div>`;
+  } catch (e) {
+    $("previewOut").innerHTML = `<span class="chip warn">${esc(e.message)}</span>`;
+    toast(e.message, "err");
+  }
+};
+
+$("remoteBtn").onclick = () => submitJob("import/remote", remoteBody());
+
+$("offlineBtn").onclick = () => {
+  let products;
+  try {
+    products = JSON.parse($("offlineJson").value);
+    if (!Array.isArray(products)) throw new Error("expected a JSON array of products");
+  } catch (e) { toast("Invalid JSON: " + e.message, "err"); return; }
+  submitJob("import/offline", {
+    products, generate_images: $("genImages").checked,
+    providers: picked(), sku_prefix: $("offlinePrefix").value || "GEN",
+  });
+};
 
 function watchJob(id) {
   stopWatch();
@@ -474,21 +1079,31 @@ function watchJob(id) {
   const tick = async () => {
     try {
       const j = await json(await fetch(`${API}/admin/jobs/${id}`));
-      const pct = j.total ? Math.round(100 * j.processed / j.total) : (j.status === "running" ? 5 : 100);
+      const pct = j.total ? Math.round(100 * j.processed / j.total) : (j.status === "running" ? 6 : 100);
       $("jobBar").firstElementChild.style.width = pct + "%";
-      $("jobStatus").textContent = `${j.kind}: ${j.status} — ${j.error || j.detail}` +
-        (j.total ? ` (${j.processed}/${j.total})` : "");
+      $("jobLine").innerHTML =
+        `<span class="chip accent">${esc(j.kind)}</span>` +
+        `<span class="chip">${esc(j.status)}</span>` +
+        (j.total ? `<span class="chip num">${j.processed}/${j.total}</span>` : "") +
+        `<span style="color:var(--text-dim)">${esc(j.error || j.detail)}</span>`;
       if (j.status === "succeeded" || j.status === "failed") {
         stopWatch();
-        setTimeout(() => { $("jobBar").classList.add("hide"); loadAdmin(); refresh(); }, 600);
+        toast(`${j.kind} ${j.status}`, j.status === "failed" ? "err" : "ok");
+        setTimeout(() => { $("jobBar").classList.add("hide"); loadAdmin(); refresh(); }, 700);
       }
-    } catch (e) { stopWatch(); $("jobStatus").textContent = "error: " + e.message; }
+    } catch (e) { stopWatch(); $("jobLine").innerHTML = `<span class="chip warn">${esc(e.message)}</span>`; }
   };
   tick();
-  poll = setInterval(tick, 700);
+  state.poll = setInterval(tick, 900);
 }
-function stopWatch() { if (poll) { clearInterval(poll); poll = null; } }
+function stopWatch() { if (state.poll) { clearInterval(state.poll); state.poll = null; } }
 
+/* ---------------- boot ---------------- */
+$("results").innerHTML = `<div class="empty" style="grid-column:1/-1">
+  <div class="big">🔎</div><h3>Search the catalogue</h3>
+  <p>Try a phrase that shares no words with any product — that's where semantic search
+     separates from keyword matching. Or tick <b>compare all indexes</b> to run the same
+     query against every embedding provider at once.</p></div>`;
 refresh();
 </script>
 </body>

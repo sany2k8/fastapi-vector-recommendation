@@ -182,6 +182,69 @@ in the UI to reproduce it.
 
 ---
 
+## Adding data: two routes in
+
+Both land in the same place — a `ProductDraft` — so de-duplication, image handling and
+embedding are written once. Both are background jobs, driven from the **Admin → Add data**
+tab or the API.
+
+### Offline (generated) — no network at all
+
+Paste or upload a JSON array of products; images are **drawn locally** with Pillow.
+
+```bash
+curl -s localhost:8800/api/v1/admin/import/offline -H 'content-type: application/json' -d '{
+  "products": [{"name":"Copper Pour-Over Kettle","category":"kettles","brand":"Halden",
+                "price":74.5,"color":"copper",
+                "description":"Gooseneck kettle with a built-in thermometer"}],
+  "providers": ["local_hash"], "sku_prefix": "GEN"}'
+```
+
+Categories and colours outside the built-in palette are fine: an unknown colour word is
+hashed into a stable hue and an unknown category gets one of three fallback silhouettes,
+so the same word always renders the same image while distinct words stay visually
+distinct — which is what the image vectors key on.
+
+### Remote — fetch a JSON feed and its photos
+
+Point it at a feed, map its fields onto ours, preview, then import.
+
+```bash
+curl -s localhost:8800/api/v1/admin/import/remote/preview -H 'content-type: application/json' \
+  -d '{"preset":"dummyjson","limit":5}'
+```
+
+```bash
+curl -s localhost:8800/api/v1/admin/import/remote -H 'content-type: application/json' \
+  -d '{"preset":"dummyjson","limit":50,"download_images":true,"providers":["local_hash"]}'
+```
+
+`GET /api/v1/admin/import/presets` lists ready-made mappings (DummyJSON, Fake Store API).
+For anything else, give a `url` plus a `mapping` — values are dotted paths, and a path
+landing on a list takes its first element, which is how `images: [...]` becomes one photo:
+
+```json
+{"items_path": "data.results", "name": "title", "image_url": "images", "price": "cost.amount"}
+```
+
+**Preview is a dry run**: it fetches, maps and reports what *would* land — including how
+many are already present — without writing anything.
+
+### Three things that make this safe rather than convenient
+
+- **SSRF guards.** A remote import makes the *server* fetch a URL a user chose. Every hop
+  is validated: http/https only, the hostname is resolved and every address must be
+  globally routable (so `169.254.169.254` and `localhost:5439` are refused), redirects are
+  followed **manually** so each new location is re-checked, and responses are size-capped
+  while streaming. `ALLOW_PRIVATE_IMPORT_HOSTS=true` opts out for local fixtures only.
+- **Images are downscaled on the way in** to `MAX_IMAGE_DIMENSION` (1024). Voyage bills
+  image embeddings by pixel, so importing 4000px photos would burn quota for no retrieval
+  benefit.
+- **Imports insert unembedded, then run the batched re-index.** Embedding inline would
+  cost two API calls per product; batching turns a 100-product import into a handful of
+  requests. A product whose photo fails to download is still imported — it keeps its text
+  vector, which the ranking already handles.
+
 ## Surviving a rate-limited free tier
 
 Voyage without a payment method allows **3 requests/min and 10K tokens/min**. Three things make
@@ -242,8 +305,26 @@ query: "zzzz qqqq nonexistent gibberish"
   cohere  floor=0.18 · 28 cut · 0 kept   (nothing above threshold)
 ```
 
-The per-provider floors are starting points measured on *this* catalogue, not laws — re-measure
-against yours. Set a provider's floor to `0` to disable it, or pass `min_score` per request.
+### Measured floors, and one provider where thresholds simply do not work
+
+Comparing real queries against deliberate nonsense on the demo catalogue:
+
+| index | junk query peaks at | relevant results start at | separable? | floor |
+|---|---|---|---|---|
+| `voyage` | 0.241 | 0.349 | **yes** | 0.29 |
+| `jina` | — | ~0.55 | yes | 0.50 |
+| `cohere` | — | ~0.25 | yes | 0.18 |
+| `gemini` | **0.605** | **0.600** | **no** | 0 (disabled) |
+
+**Gemini's scores do not separate signal from noise.** Gibberish scores as highly as genuinely
+relevant results, so no absolute floor can split them, and its within-query spread is too narrow
+for the ratio cutoff to help either. Its floor is set to `0` deliberately — disabled, not
+untuned. A Gemini index will return `top_k` rows whether or not anything relevant exists, so
+judge it on *ranking* (which is good) rather than on score. If you need "no results" to be
+possible, use one of the other indexes.
+
+These are measured on *this* catalogue, not laws — re-measure against yours. Set a provider's
+floor to `0` to disable it, or pass `min_score` per request.
 
 ---
 

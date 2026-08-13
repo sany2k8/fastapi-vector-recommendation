@@ -1,11 +1,16 @@
 """Admin (seed / re-index / clear) request and job schemas."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-JobKind = Literal["seed", "reindex", "clear_catalog", "clear_provider"]
+from app.schemas.importing import FieldMapping
+
+JobKind = Literal[
+    "seed", "reindex", "clear_catalog", "clear_provider", "import_offline", "import_remote"
+]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -35,6 +40,59 @@ class ReindexRequest(BaseModel):
             "after a rate-limit failure instead of paying for the whole catalogue again."
         ),
     )
+
+
+class OfflineProduct(BaseModel):
+    """One product supplied directly by the admin, with no network involved."""
+
+    sku: str | None = Field(default=None, description="Generated from the name if omitted.")
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=4000)
+    category: str = Field(default="uncategorised", max_length=120)
+    brand: str | None = Field(default=None, max_length=120)
+    price: Decimal = Field(default=Decimal("0.00"), ge=0)
+    color: str | None = Field(
+        default=None,
+        description="Drives the generated image. Unknown words get a stable derived colour.",
+    )
+    attributes: dict[str, str] = Field(default_factory=dict)
+
+
+class OfflineImportRequest(BaseModel):
+    products: list[OfflineProduct] = Field(min_length=1)
+    generate_images: bool = Field(
+        default=True, description="Draw a product image locally for each item."
+    )
+    providers: list[str] = Field(default_factory=list)
+    sku_prefix: str = Field(default="GEN", max_length=16)
+
+
+class RemoteImportRequest(BaseModel):
+    url: str | None = Field(default=None, description="JSON feed to import. Ignored if preset set.")
+    preset: str | None = Field(default=None, description="A known feed, e.g. 'dummyjson'.")
+    mapping: FieldMapping | None = Field(
+        default=None, description="Field mapping. Defaults to the preset's, else DummyJSON's."
+    )
+    limit: int = Field(default=50, ge=1, le=500)
+    download_images: bool = Field(default=True)
+    providers: list[str] = Field(default_factory=list)
+    sku_prefix: str = Field(
+        default="", max_length=16, description="Derived from the host if empty."
+    )
+
+
+class ImportPreview(BaseModel):
+    """What a remote import *would* bring in, without writing anything."""
+
+    source: str
+    total_available: int
+    sample: list[dict[str, object]]
+    with_images: int
+    already_present: int
+
+
+class ImportPresets(BaseModel):
+    presets: dict[str, dict[str, object]]
 
 
 class ClearProviderRequest(BaseModel):

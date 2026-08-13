@@ -6,11 +6,13 @@ its palette colour, which gives the image vectors genuine structure to cluster o
 same-category items share a shape, same-colour items share a histogram.
 """
 
+import colorsys
+import hashlib
 import io
 
 from PIL import Image, ImageDraw
 
-from app.seeding.catalog_data import COLORS, CatalogEntry
+from app.seeding.catalog_data import COLORS
 
 CANVAS = 512
 
@@ -118,17 +120,46 @@ _SHAPES = {
 }
 
 
-def render(entry: CatalogEntry) -> bytes:
-    """Draw a product image and return it as JPEG bytes."""
-    color = COLORS.get(entry["color"], (120, 120, 120))
-    img = _background(color)
+def colour_for(name: str) -> tuple[int, int, int]:
+    """Resolve a colour word, deriving a stable one for anything unknown.
+
+    Offline generation has to cope with colours and categories the built-in palette has
+    never seen, because admins import their own catalogues. Hashing the word into a hue
+    keeps it deterministic — the same word always renders the same colour — while keeping
+    distinct words visually distinct, which is what the image vectors key on.
+    """
+    known = COLORS.get(name.strip().lower())
+    if known:
+        return known
+    digest = hashlib.blake2b(name.strip().lower().encode(), digest_size=4).digest()
+    hue = int.from_bytes(digest, "big") % 360
+    r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.45, 0.55)
+    return int(r * 255), int(g * 255), int(b * 255)
+
+
+def _generic(draw: ImageDraw.ImageDraw, c: tuple[int, int, int], category: str) -> None:
+    """Fallback silhouette for an unknown category — varied by name, not identical."""
+    variant = hashlib.blake2b(category.encode(), digest_size=2).digest()[0] % 3
+    if variant == 0:
+        draw.rounded_rectangle((150, 160, 362, 372), radius=34, fill=c, outline=_shade(c, 0.6))
+    elif variant == 1:
+        draw.ellipse((150, 150, 362, 362), fill=c, outline=_shade(c, 0.6), width=6)
+    else:
+        draw.polygon([(256, 140), (372, 330), (140, 330)], fill=c, outline=_shade(c, 0.6))
+    draw.line(((170, 400), (342, 400)), fill=_shade(c, 0.55), width=12)
+
+
+def render(category: str, color: str | None = None) -> bytes:
+    """Draw a product image for a category/colour pair and return JPEG bytes."""
+    rgb = colour_for(color or category)
+    img = _background(rgb)
     draw = ImageDraw.Draw(img)
 
-    shape = _SHAPES.get(entry["category"])
+    shape = _SHAPES.get(category.strip().lower())
     if shape is None:
-        draw.rounded_rectangle((150, 150, 362, 362), radius=30, fill=color)
+        _generic(draw, rgb, category)
     else:
-        shape(draw, color)
+        shape(draw, rgb)
 
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=88)

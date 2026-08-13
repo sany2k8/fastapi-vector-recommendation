@@ -42,15 +42,41 @@ def validate_image(payload: bytes) -> str:
     return fmt
 
 
-def store_image(payload: bytes, product_id: uuid.UUID) -> str:
-    """Persist bytes under data/images and return the stored filename."""
+def normalize_image(payload: bytes) -> tuple[bytes, str]:
+    """Downscale oversized images and return canonical (bytes, extension).
+
+    Anything wider or taller than `MAX_IMAGE_DIMENSION` is resampled and re-encoded as
+    JPEG. Beyond saving disk, this is a cost control: Voyage bills image embeddings by
+    pixel, so importing 4000px product photos would burn quota for no retrieval gain.
+    Images already within bounds are stored untouched.
+    """
     fmt = validate_image(payload)
+    limit = get_settings().max_image_dimension
+
+    with Image.open(io.BytesIO(payload)) as img:
+        if max(img.size) <= limit:
+            return payload, ALLOWED_FORMATS[fmt]
+        resized = img.convert("RGB")
+        resized.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        resized.save(buffer, format="JPEG", quality=88)
+        return buffer.getvalue(), ".jpg"
+
+
+def store_image(payload: bytes, product_id: uuid.UUID) -> tuple[str, bytes]:
+    """Persist an image and return (filename, the bytes actually written).
+
+    The caller must embed the *returned* bytes, not what it passed in. Re-indexing reads
+    the stored file, so embedding the original while storing a normalized copy would make
+    a product's vectors change silently on the next re-index.
+    """
+    canonical, suffix = normalize_image(payload)
     settings = get_settings()
     settings.image_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"{product_id}{ALLOWED_FORMATS[fmt]}"
-    (settings.image_dir / filename).write_bytes(payload)
-    return filename
+    filename = f"{product_id}{suffix}"
+    (settings.image_dir / filename).write_bytes(canonical)
+    return filename, canonical
 
 
 def remove_image(filename: str | None) -> None:
